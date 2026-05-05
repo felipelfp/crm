@@ -442,6 +442,10 @@ function App() {
             <div className={`nav-item ${activeTab === 'semanal' ? 'active' : ''}`} onClick={() => setActiveTab('semanal')}><i className="fa-solid fa-calendar-days"></i> Semanal</div>
             <div className={`nav-item ${activeTab === 'mensal' ? 'active' : ''}`} onClick={() => setActiveTab('mensal')}><i className="fa-solid fa-chart-pie"></i> Mensal</div>
           </div>
+          
+          <div style={{marginTop:'auto', padding:'20px', fontSize:'0.65rem', color:'#475569', textAlign:'center', borderTop:'1px solid rgba(255,255,255,0.05)'}}>
+            v0.0.001
+          </div>
         </div>
 
         <div className="sys-content">
