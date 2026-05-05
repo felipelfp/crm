@@ -319,3 +319,66 @@ body { overflow: hidden; background: var(--bg-main); height: 100vh; width: 100vw
   margin-top: 15px;
   display: block;
 }
+/* RESPONSIVIDADE MOBILE */
+@media (max-width: 768px) {
+  body { overflow: auto; height: auto; }
+  .main-wrapper { height: auto; overflow: visible; }
+  .sys-container { flex-direction: column; height: auto; overflow: visible; }
+  
+  .sys-header { padding: 0 10px; font-size: 0.7rem; }
+  .header-left { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+
+  .sys-sidebar { 
+    width: 100%; 
+    height: auto; 
+    flex-direction: row; 
+    overflow-x: auto; 
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    position: sticky;
+    top: 48px;
+    z-index: 100;
+  }
+  
+  .sidebar-logo, .sidebar-label { display: none; }
+  .sidebar-nav { display: flex; flex-direction: row; width: 100%; }
+  .nav-item { padding: 10px 15px; font-size: 0.7rem; white-space: nowrap; flex: 1; justify-content: center; border-left: none; border-bottom: 3px solid transparent; }
+  .nav-item.active { border-left-color: transparent; border-bottom-color: var(--primary); }
+
+  .sys-content { padding: 10px; gap: 15px; overflow: visible; }
+  
+  .stat-grid { grid-template-columns: 1fr; gap: 15px; }
+  .action-grid { grid-template-columns: repeat(3, 1fr); }
+  
+  .stat-card { padding: 15px; min-height: 80px; }
+  .stat-card .value, .stat-card .value-input { font-size: 2rem !important; }
+  .stat-card i { font-size: 2rem; }
+
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .sys-table { min-width: 600px; }
+
+  /* MODAL MOBILE */
+  .modal-container { 
+    width: 100vw; 
+    height: 100vh; 
+    border-radius: 0; 
+    flex-direction: column; 
+    overflow-y: auto;
+  }
+  .left-crm-panel { width: 100%; height: auto; border-right: none; border-bottom: 1px solid #e2e8f0; padding: 20px; }
+  .right-form-panel { width: 100%; padding: 20px; }
+  
+  .modal-header { margin-bottom: 20px; }
+  .modal-header h2 { font-size: 1.2rem; }
+  
+  .giant-sticky-note-textarea { height: 120px; font-size: 0.95rem; }
+  
+  /* GRID FORMULÁRIO MOBILE */
+  div[style*="gridTemplateColumns:'1fr 1fr'"] {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .action-grid { grid-template-columns: repeat(2, 1fr); }
+  .login-card { width: 90vw; padding: 30px 20px; }
+}
