@@ -556,7 +556,7 @@ function App() {
                   <table className="sys-table">
                     <thead><tr><th>Lead / Empresa</th><th>Telefone</th><th>Bairro / Regional</th><th>Status</th><th>Ações</th></tr></thead>
                     <tbody>
-                      {leads.filter(l => l.category === currentBranch).map(l => (
+                      {leads.filter(l => l.category === currentBranch && !l.lastCall && !l.nextFollowUp && l.status === 'Pendente').map(l => (
                         <tr key={l.id}>
                           <td onClick={() => openLeadModal(l)} style={{fontWeight:600, color:'var(--primary)', cursor:'pointer'}}>{l.name}</td>
                           <td>{l.phone}</td>
@@ -577,8 +577,8 @@ function App() {
                           </td>
                         </tr>
                       ))}
-                      {leads.filter(l => l.category === currentBranch).length === 0 && (
-                        <tr><td colSpan="5" style={{textAlign:'center', padding:'40px', color:'#94a3b8'}}>Nenhum lead encontrado nesta categoria.</td></tr>
+                      {leads.filter(l => l.category === currentBranch && !l.lastCall && !l.nextFollowUp && l.status === 'Pendente').length === 0 && (
+                        <tr><td colSpan="5" style={{textAlign:'center', padding:'40px', color:'#94a3b8'}}>Nenhum lead pendente nesta categoria (todos já foram contatados ou agendados).</td></tr>
                       )}
                     </tbody>
                   </table>
