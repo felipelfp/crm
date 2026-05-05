@@ -1,0 +1,10 @@
+/* RESET TOTAL - NADA DE ESTILOS DO VITE */
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #f0f2f5;
+}
+* { box-sizing: border-box; }
