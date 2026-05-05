@@ -626,7 +626,7 @@ function App() {
                           <tr key={l.id}>
                             <td onClick={() => openLeadModal(l)} style={{fontWeight:600, color:'var(--primary)', cursor:'pointer'}}>{l.name}</td>
                             <td><span className="badge" style={{background:'#f1f5f9', color:'#475569', padding:'4px 8px', borderRadius:'4px', fontSize:'0.6rem', fontWeight:800}}>{l.status}</span></td>
-                            <td style={{fontWeight:700, color: l.nextFollowUp === today ? '#ef4444' : '#1e293b'}}>{l.nextFollowUp.split('-').reverse().join('/')}</td>
+                            <td style={{fontWeight:800, color: '#ef4444'}}>{l.nextFollowUp.split('-').reverse().join('/')}</td>
                             <td><button className="btn-editar" onClick={() => openLeadModal(l)}>Atualizar</button></td>
                           </tr>
                         ))}
