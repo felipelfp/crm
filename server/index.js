@@ -18,10 +18,18 @@ app.use(cors());
 app.use(express.json());
 
 // MongoDB Connection
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/luvi_crm';
+const MONGODB_URI = process.env.MONGODB_URI;
+
+if (!MONGODB_URI) {
+  console.error('❌ ERRO: MONGODB_URI não encontrada! Verifique o Environment no Render.');
+}
+
 mongoose.connect(MONGODB_URI)
-  .then(() => console.log('✅ MongoDB conectado com sucesso!'))
-  .catch(err => console.error('❌ Erro ao conectar ao MongoDB:', err));
+  .then(() => console.log('✅ Conectado ao MongoDB Atlas com sucesso!'))
+  .catch(err => {
+    console.error('❌ Falha na conexão com o MongoDB:', err);
+    process.exit(1);
+  });
 
 // --- API ROUTES ---
 
