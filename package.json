@@ -2,8 +2,7 @@
   "name": "luvi-crm-monolith",
   "version": "1.0.0",
   "scripts": {
-    "install-all": "npm install --prefix server && npm install --prefix React",
-    "build": "npm install --prefix React && npm run build --prefix React",
-    "start": "npm install --prefix server && node server/index.js"
+    "build": "npm install --prefix server && npm install --prefix React && npm run build --prefix React",
+    "start": "node server/index.js"
   }
 }

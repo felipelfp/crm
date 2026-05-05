@@ -111,10 +111,7 @@ const frontendPath = path.join(__dirname, '../React/dist');
 app.use(express.static(frontendPath));
 
 app.get('*', (req, res) => {
-  // Se não for uma rota de API, serve o index.html
-  if (!req.url.startsWith('/api')) {
-    res.sendFile(path.join(frontendPath, 'index.html'));
-  }
+  res.sendFile(path.join(frontendPath, 'index.html'));
 });
 
 app.listen(PORT, () => {
