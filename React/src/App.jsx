@@ -19,9 +19,7 @@ function App() {
     return saved ? JSON.parse(saved) : {};
   });
   
-  const [selectedNoteIndex, setSelectedNoteIndex] = useState(null);
-  const [sessionNoteAdded, setSessionNoteAdded] = useState(false);
-  
+  const [searchTerm, setSearchTerm] = useState('');
   const chartInstances = useRef({});
 
   const [isLoggedIn, setIsLoggedIn] = useState(() => localStorage.getItem('luvi_auth') === 'true');
@@ -116,7 +114,22 @@ function App() {
     const loadData = async () => {
       try {
         const serverLeads = await leadService.getLeads();
-        if (serverLeads && serverLeads.length > 0) setLeads(serverLeads);
+        if (serverLeads && serverLeads.length > 0) {
+          setLeads(prev => {
+            const combined = [...serverLeads];
+            const seenNames = new Set(serverLeads.map(l => (l.name || "").toUpperCase().trim()));
+            
+            // Adiciona leads locais/estáticos que ainda não estão no servidor
+            prev.forEach(p => {
+              const pName = (p.name || "").toUpperCase().trim();
+              if (pName && !seenNames.has(pName)) {
+                combined.push(p);
+                seenNames.add(pName);
+              }
+            });
+            return combined;
+          });
+        }
         
         const serverStats = await statService.getStats();
         if (serverStats && serverStats.length > 0) {
@@ -125,7 +138,7 @@ function App() {
           setStats(prev => ({ ...prev, byDate: statsMap }));
         }
       } catch (err) {
-        console.warn("Servidor offline, usando dados locais.");
+        console.warn("Servidor offline ou erro ao carregar, usando dados locais.");
       }
     };
     loadData();
@@ -546,22 +559,42 @@ function App() {
               </div>
 
               <div className="card-section" style={{marginTop:'15px', flex:1}}>
-                <div className="category-tabs" style={{display:'flex', gap:'10px', padding:'12px', borderBottom:'1px solid #f1f5f9', background:'#f8fafc'}}>
-                  {['CONSTRUTORAS', 'ESCOLAS', 'FACULDADES', 'SERVIÇOS'].map(cat => (
-                    <button key={cat} className={`tab-filter ${currentBranch === cat ? 'active' : ''}`} onClick={() => setCurrentBranch(cat)} style={{padding:'8px 20px', borderRadius:'20px', border:'1px solid #e2e8f0', fontSize:'0.7rem', fontWeight:800, cursor:'pointer', background: currentBranch === cat ? 'var(--primary)' : '#fff', color: currentBranch === cat ? '#fff' : '#64748b'}}>{cat}</button>
-                  ))}
-                  <button className="tab-filter" style={{marginLeft:'auto', background:'#10b981', color:'#fff', border:'none'}} onClick={() => openLeadModal({id:'new', name:'', phone:'', category: currentBranch})}>+ Novo Lead</button>
+                <div className="category-tabs" style={{display:'flex', gap:'10px', padding:'12px', borderBottom:'1px solid #f1f5f9', background:'#f8fafc', alignItems:'center', flexWrap:'wrap'}}>
+                  <div className="search-box" style={{position:'relative', marginRight:'10px', flex:1, minWidth:'200px'}}>
+                    <i className="fa-solid fa-magnifying-glass" style={{position:'absolute', left:'12px', top:'50%', transform:'translateY(-50%)', color:'#94a3b8', fontSize:'0.8rem'}}></i>
+                    <input 
+                      type="text" 
+                      placeholder="Filtrar por nome do cliente..." 
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      style={{width:'100%', padding:'8px 12px 8px 35px', borderRadius:'20px', border:'1px solid #e2e8f0', fontSize:'0.75rem', outline:'none', transition:'all 0.2s'}}
+                      onFocus={(e) => e.target.style.borderColor = 'var(--primary)'}
+                      onBlur={(e) => e.target.style.borderColor = '#e2e8f0'}
+                    />
+                  </div>
+                  <div style={{display:'flex', gap:'8px'}}>
+                    {['CONSTRUTORAS', 'ESCOLAS', 'FACULDADES', 'SERVIÇOS'].map(cat => (
+                      <button key={cat} className={`tab-filter ${currentBranch === cat ? 'active' : ''}`} onClick={() => { setCurrentBranch(cat); setSearchTerm(''); }} style={{padding:'8px 15px', borderRadius:'20px', border:'1px solid #e2e8f0', fontSize:'0.7rem', fontWeight:800, cursor:'pointer', background: currentBranch === cat ? 'var(--primary)' : '#fff', color: currentBranch === cat ? '#fff' : '#64748b'}}>{cat}</button>
+                    ))}
+                  </div>
+                  <button className="tab-filter" style={{marginLeft:'auto', background:'#10b981', color:'#fff', border:'none', padding:'8px 20px', borderRadius:'20px', fontWeight:800, cursor:'pointer'}} onClick={() => openLeadModal({id:'new', name:'', phone:'', category: currentBranch})}>+ Novo Lead</button>
                 </div>
                 <div className="table-wrap">
                   <table className="sys-table">
                     <thead><tr><th>Lead / Empresa</th><th>Telefone</th><th>Bairro / Regional</th><th>Status</th><th>Ações</th></tr></thead>
                     <tbody>
-                      {leads.filter(l => l.category === currentBranch && !l.lastCall && !l.nextFollowUp && l.status === 'Pendente').map(l => (
+                      {leads.filter(l => {
+                        const matchesSearch = l.name.toLowerCase().includes(searchTerm.toLowerCase());
+                        const matchesCategory = l.category === currentBranch;
+                        // Se houver busca, ignoramos o filtro de status "Pendente" para encontrar qualquer cliente
+                        if (searchTerm) return matchesSearch;
+                        return matchesCategory && !l.lastCall && !l.nextFollowUp && l.status === 'Pendente';
+                      }).map(l => (
                         <tr key={l.id}>
                           <td onClick={() => openLeadModal(l)} style={{fontWeight:600, color:'var(--primary)', cursor:'pointer'}}>{l.name}</td>
                           <td>{l.phone}</td>
                           <td>{l.address || '—'}</td>
-                          <td><span className="badge badge-status" style={{background:'#f1f5f9', color:'#475569', padding:'4px 8px', borderRadius:'4px', fontSize:'0.6rem', fontWeight:800}}>{l.status}</span></td>
+                          <td><span className="badge badge-status" style={{background: l.status === 'Pendente' ? '#f1f5f9' : '#dcfce7', color: l.status === 'Pendente' ? '#475569' : '#166534', padding:'4px 8px', borderRadius:'4px', fontSize:'0.6rem', fontWeight:800}}>{l.status}</span></td>
                           <td>
                             <div style={{display:'flex', gap:'5px'}}>
                               <button className="btn-ligar" title="Registrar Ligação" onClick={() => {
@@ -577,8 +610,11 @@ function App() {
                           </td>
                         </tr>
                       ))}
-                      {leads.filter(l => l.category === currentBranch && !l.lastCall && !l.nextFollowUp && l.status === 'Pendente').length === 0 && (
-                        <tr><td colSpan="5" style={{textAlign:'center', padding:'40px', color:'#94a3b8'}}>Nenhum lead pendente nesta categoria (todos já foram contatados ou agendados).</td></tr>
+                      {leads.filter(l => {
+                        if (searchTerm) return l.name.toLowerCase().includes(searchTerm.toLowerCase());
+                        return l.category === currentBranch && !l.lastCall && !l.nextFollowUp && l.status === 'Pendente';
+                      }).length === 0 && (
+                        <tr><td colSpan="5" style={{textAlign:'center', padding:'40px', color:'#94a3b8'}}>{searchTerm ? 'Nenhum cliente encontrado com este nome.' : 'Nenhum lead pendente nesta categoria (todos já foram contatados ou agendados).'}</td></tr>
                       )}
                     </tbody>
                   </table>
