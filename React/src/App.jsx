@@ -402,8 +402,6 @@ function App() {
           <div className="sys-header">
             <div className="header-left"><i className="fa-solid fa-cube"></i> DASHBOARD GERENCIAL — SISTEMA DE VENDAS</div>
             <div className="header-right">
-              <i className="fa-regular fa-calendar"></i> Maio 2026 
-              <span style={{margin:'0 15px', opacity:0.5}}>|</span>
               <i className="fa-regular fa-circle-user"></i> Felipe Possa
               <button onClick={handleLogout} style={{background:'none', border:'none', color:'#ef4444', marginLeft:'15px', cursor:'pointer', fontWeight:700}}>Sair</button>
             </div>
