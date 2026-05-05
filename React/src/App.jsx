@@ -369,33 +369,50 @@ function App() {
     <div className="main-wrapper">
       {!isLoggedIn ? (
         <div className="login-screen">
-          <div className="login-card">
+          <form className="login-card" onSubmit={(e) => {
+            e.preventDefault();
+            handleLogin(document.getElementById('login-user').value, document.getElementById('login-pass').value);
+          }}>
             <div className="login-logo"><i className="fa-solid fa-shield-halved"></i></div>
             <h2>Acesso Restrito</h2>
             <p>Entre com suas credenciais para gerenciar o CRM.</p>
             
             <div className="login-input-group">
-              <label>Usuário</label>
+              <label htmlFor="login-user">Usuário</label>
               <div className="login-field-wrap">
                 <i className="fa-solid fa-user"></i>
-                <input type="text" id="login-user" placeholder="seu.nome" onKeyDown={(e) => e.key === 'Enter' && document.getElementById('login-pass').focus()} />
+                <input 
+                  type="text" 
+                  id="login-user" 
+                  name="username"
+                  placeholder="seu.nome" 
+                  required
+                  autoComplete="username"
+                />
               </div>
             </div>
 
             <div className="login-input-group">
-              <label>Senha</label>
+              <label htmlFor="login-pass">Senha</label>
               <div className="login-field-wrap">
                 <i className="fa-solid fa-lock"></i>
-                <input type="password" id="login-pass" placeholder="••••••••" onKeyDown={(e) => e.key === 'Enter' && handleLogin(document.getElementById('login-user').value, e.target.value)} />
+                <input 
+                  type="password" 
+                  id="login-pass" 
+                  name="password"
+                  placeholder="••••••••" 
+                  required
+                  autoComplete="current-password"
+                />
               </div>
             </div>
 
-            <button className="btn-login" onClick={() => handleLogin(document.getElementById('login-user').value, document.getElementById('login-pass').value)}>
+            <button type="submit" className="btn-login">
               Entrar no Sistema
             </button>
 
             {loginError && <span className="login-error">{loginError}</span>}
-          </div>
+          </form>
         </div>
       ) : (
         <>
