@@ -29,6 +29,7 @@ function App() {
   const [teamStats, setTeamStats] = useState([]); // Estatísticas individuais de cada membro
   const [filterUserId, setFilterUserId] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [isSyncing, setIsSyncing] = useState(false);
 
   const loadTeam = async () => {
     if (userRole !== 'MANAGER') return;
@@ -660,8 +661,30 @@ function App() {
               )}
             </div>
             <div className="header-right" style={{display:'flex', alignItems:'center'}}>
-              <button onClick={() => { loadData(); lastActionTimeRef.current = Date.now(); }} title="Forçar Atualização de Dados" style={{background:'rgba(16,185,129,0.1)', border:'none', color:'#10b981', padding:'6px 12px', borderRadius:'6px', cursor:'pointer', marginRight:'10px', fontWeight:700, fontSize:'0.7rem'}}>
-                <i className="fa-solid fa-arrows-rotate" style={{marginRight:'5px'}}></i> SINCRONIZAR
+              <button 
+                onClick={async () => { 
+                  setIsSyncing(true);
+                  await loadData(); 
+                  lastActionTimeRef.current = Date.now();
+                  setTimeout(() => setIsSyncing(false), 1000);
+                }} 
+                disabled={isSyncing}
+                title="Forçar Atualização de Dados" 
+                style={{
+                  background: isSyncing ? 'rgba(16,185,129,0.2)' : 'rgba(16,185,129,0.1)', 
+                  border: 'none', 
+                  color: '#10b981', 
+                  padding: '6px 12px', 
+                  borderRadius: '6px', 
+                  cursor: isSyncing ? 'not-allowed' : 'pointer', 
+                  marginRight: '10px', 
+                  fontWeight: 700, 
+                  fontSize: '0.7rem',
+                  transition: 'all 0.3s ease'
+                }}
+              >
+                <i className={`fa-solid ${isSyncing ? 'fa-spinner fa-spin' : 'fa-arrows-rotate'}`} style={{marginRight:'5px'}}></i>
+                {isSyncing ? 'SINCRONIZANDO...' : 'SINCRONIZAR'}
               </button>
               <button onClick={exportBackup} title="Baixar Backup dos Dados" style={{background:'rgba(37,99,235,0.1)', border:'none', color:'var(--primary)', padding:'6px 12px', borderRadius:'6px', cursor:'pointer', marginRight:'15px', fontWeight:700, fontSize:'0.7rem'}}>
                 <i className="fa-solid fa-download" style={{marginRight:'5px'}}></i> BACKUP
