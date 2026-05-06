@@ -233,7 +233,7 @@ function App() {
       }
 
       if (userRole === 'MANAGER') {
-        const tStats = await statService.getTeamStats();
+        const tStats = await statService.getTeamStats(selectedDate);
         if (tStats && Array.isArray(tStats)) setTeamStats(tStats);
       }
     } catch (err) {

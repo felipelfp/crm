@@ -47,8 +47,9 @@ export const statService = {
     });
     return res.json();
   },
-  getTeamStats: async () => {
-    const res = await fetch(`${API_URL}/team-stats`, {
+  getTeamStats: async (date = null) => {
+    const url = date ? `${API_URL}/team-stats?date=${date}` : `${API_URL}/team-stats`;
+    const res = await fetch(url, {
       headers: getHeaders()
     });
     return res.json();

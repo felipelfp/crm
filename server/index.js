@@ -327,12 +327,12 @@ app.get('/api/team-stats', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'MANAGER') return res.status(403).json({ error: 'Acesso negado' });
     
-    // Pegar data local de São Paulo para bater com o frontend
-    const today = new Date().toLocaleDateString('pt-BR', {timeZone: 'America/Sao_Paulo'}).split('/').reverse().join('-');
+    // Data vinda do frontend ou fallback para SP
+    const targetDate = req.query.date || new Date().toLocaleDateString('pt-BR', {timeZone: 'America/Sao_Paulo'}).split('/').reverse().join('-');
     
     const users = await User.find({ role: 'USER' });
     const teamData = await Promise.all(users.map(async (u) => {
-      const s = await Stats.findOne({ userId: u._id, date: today });
+      const s = await Stats.findOne({ userId: u._id, date: targetDate });
       return {
         userId: u._id,
         username: u.username,
