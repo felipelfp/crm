@@ -148,6 +148,20 @@ const ensureAdmin = async () => {
     }
 
     console.log('✅ Faxina completa! Sistema unificado.');
+    
+    // --- MIGRAÇÃO DE GESTORA: REATRIBUIR LEADS DA GESSICA PARA O FELIPE ---
+    const gessica = await User.findOne({ username: 'gessica.ogliari' });
+    const felipe = await User.findOne({ username: 'felipe.possa' });
+    
+    if (gessica && felipe) {
+      const reassignResult = await Lead.updateMany(
+        { $or: [{ userId: gessica._id }, { consultant: 'gessica.ogliari' }] },
+        { $set: { userId: felipe._id, consultant: 'felipe.possa' } }
+      );
+      if (reassignResult.modifiedCount > 0) {
+        console.log(`📋 Reatribuídos ${reassignResult.modifiedCount} leads da Gessica para o Felipe.`);
+      }
+    }
 
     // Atribuir órfãos restantes ao felipe
     const orphanResult = await Lead.updateMany(
