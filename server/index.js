@@ -118,6 +118,37 @@ const ensureAdmin = async () => {
       }
     }
 
+    // --- MIGRAÇÃO DE RESULTADOS: LIMPAR DUPLICADOS E UNIFICAR ---
+    console.log('🧹 Iniciando limpeza de duplicados em Stats...');
+    const allStats = await Stats.find({}).sort({ date: 1, userId: 1 });
+    const seenStats = new Map();
+    const toDelete = [];
+
+    for (const s of allStats) {
+      const key = `${s.date}_${s.userId}`;
+      if (seenStats.has(key)) {
+        const original = seenStats.get(key);
+        // Soma os valores no original
+        original.t = (original.t || 0) + (s.t || 0);
+        original.c = (original.c || 0) + (s.c || 0);
+        original.m = (original.m || 0) + (s.m || 0);
+        original.cl = (original.cl || 0) + (s.cl || 0);
+        if (s.goal) original.goal = s.goal;
+        
+        await original.save();
+        toDelete.push(s._id);
+      } else {
+        seenStats.set(key, s);
+      }
+    }
+
+    if (toDelete.length > 0) {
+      await Stats.deleteMany({ _id: { $in: toDelete } });
+      console.log(`✅ Removidos ${toDelete.length} registros duplicados de Stats.`);
+    }
+
+    console.log('✅ Faxina completa! Sistema unificado.');
+
     // Atribuir órfãos restantes ao felipe
     const orphanResult = await Lead.updateMany(
       { userId: { $exists: false } },
