@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Chart from 'chart.js/auto';
 import './App.css';
 import { leadService, statService, authService, userService } from './services/api';
