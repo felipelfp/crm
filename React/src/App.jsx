@@ -18,6 +18,7 @@ function App() {
   const [isOnline, setIsOnline] = useState(true);
   const [sessionNoteAdded, setSessionNoteAdded] = useState(false);
   const [selectedNoteIndex, setSelectedNoteIndex] = useState(null);
+  const lastActionTimeRef = useRef(Date.now());
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
   const chartInstances = useRef({});
 
@@ -28,7 +29,6 @@ function App() {
   const [teamStats, setTeamStats] = useState([]); // Estatísticas individuais de cada membro
   const [filterUserId, setFilterUserId] = useState('');
   const [loginError, setLoginError] = useState('');
-  const [lastActionTime, setLastActionTime] = useState(0);
 
   const loadTeam = async () => {
     if (userRole !== 'MANAGER') return;
@@ -242,14 +242,14 @@ function App() {
   }, [isLoggedIn, filterUserId, username, userRole, selectedDate]);
 
   useEffect(() => {
-    loadData();
     const interval = setInterval(() => {
-      if (Date.now() - lastActionTime > 20000) {
+      // Usa o Ref para checar se houve ação recente sem reiniciar o efeito
+      if (Date.now() - lastActionTimeRef.current > 20000) {
         loadData();
       }
     }, 10000);
     return () => clearInterval(interval);
-  }, [loadData, lastActionTime]);
+  }, [loadData]);
 
   const renderCharts = () => {
     const updateOrCreate = (key, ctx, config) => {
@@ -365,7 +365,7 @@ function App() {
 
   const updateM = (t, v) => {
     const dKey = selectedDate;
-    setLastActionTime(Date.now());
+    lastActionTimeRef.current = Date.now();
     setStats(prev => {
       const newStats = JSON.parse(JSON.stringify(prev));
       if (!newStats.byDate[dKey]) newStats.byDate[dKey] = {t:0, c:0, m:0, cl:0};
@@ -390,7 +390,7 @@ function App() {
     const dKey = selectedDate;
     const newValue = val === '' ? 0 : parseInt(val);
     if (isNaN(newValue)) return;
-    setLastActionTime(Date.now());
+    lastActionTimeRef.current = Date.now();
     setStats(prev => {
       const newStats = JSON.parse(JSON.stringify(prev));
       if (!newStats.byDate[dKey]) newStats.byDate[dKey] = {t:0, c:0, m:0, cl:0};
@@ -410,7 +410,7 @@ function App() {
     const dKey = selectedDate;
     const newValue = val === '' ? 0 : parseInt(val);
     if (isNaN(newValue)) return;
-    setLastActionTime(Date.now());
+    lastActionTimeRef.current = Date.now();
     setStats(prev => {
       const newStats = JSON.parse(JSON.stringify(prev));
       if (!newStats.byDate[dKey]) newStats.byDate[dKey] = {t:0, c:0, m:0, cl:0};
@@ -774,7 +774,7 @@ function App() {
                           const cleared = {t:0, c:0, m:0, cl:0};
                           setStats(prev => ({...prev, byDate: {...prev.byDate, [selectedDate]: cleared}, diaria: cleared}));
                           statService.updateStats({ date: selectedDate, ...cleared, userId: filterUserId }).catch(() => {});
-                          setLastActionTime(Date.now());
+                          lastActionTimeRef.current = Date.now();
                         }
                       }}><i className="fa-solid fa-arrows-rotate" style={{color:'#64748b'}}></i><span>Limpar Dia</span></div>
                       <div className="btn-action" onClick={() => openLeadModal({id:'new', name:'', phone:''})}><i className="fa-solid fa-circle-plus" style={{color:'#10b981'}}></i><span>Registrar Lead</span></div>
