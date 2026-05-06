@@ -177,7 +177,10 @@ mongoose.connect(MONGODB_URI)
 app.get('/api/users', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'MANAGER') return res.status(403).json({ error: 'Acesso negado' });
-    const users = await User.find({ role: { $in: ['USER', 'MANAGER'] } }, 'username _id');
+    const users = await User.find({ 
+      role: { $in: ['USER', 'MANAGER'] },
+      username: { $ne: 'gessica.ogliari' }
+    }, 'username _id');
     res.json(users);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -372,7 +375,10 @@ app.get('/api/team-stats', authenticateToken, async (req, res) => {
     // Data vinda do frontend ou fallback para SP
     const targetDate = req.query.date || new Date().toLocaleDateString('pt-BR', {timeZone: 'America/Sao_Paulo'}).split('/').reverse().join('-');
     
-    const users = await User.find({ role: { $in: ['USER', 'MANAGER'] } });
+    const users = await User.find({ 
+      role: { $in: ['USER', 'MANAGER'] },
+      username: { $ne: 'gessica.ogliari' }
+    });
     const teamData = await Promise.all(users.map(async (u) => {
       const s = await Stats.findOne({ userId: u._id, date: targetDate });
       return {
