@@ -1076,18 +1076,20 @@ function App() {
           {/* SEMANAL */}
           {activeTab === 'semanal' && (() => {
             const rangeInfo = getRangeStats(selectedDate, endDate);
+            const mStats = getMonthStats(selectedMonth); // Pega as semanas calculadas do mês atual
+            
             return (
               <div className="content-panel active">
                 {/* DEMONSTRATIVO DAS 4 SEMANAS */}
                 <div className="card-section">
                   <div className="card-header"><i className="fa-solid fa-calendar-check" style={{marginRight:'8px'}}></i> DEMONSTRATIVO SEMANAL DE METAS</div>
                   <div style={{display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:'15px', padding:'20px'}}>
-                    {[1, 2, 3, 4].map(w => (
-                      <div key={w} className="week-card-white">
-                        <div className="week-card-header"><span>Semana {w}</span> <i className="fa-solid fa-calendar-day" style={{color:'#2563eb'}}></i></div>
+                    {[0, 1, 2, 3].map(idx => (
+                      <div key={idx} className="week-card-white">
+                        <div className="week-card-header"><span>Semana {idx + 1}</span> <i className="fa-solid fa-calendar-day" style={{color:'#2563eb'}}></i></div>
                         <div className="week-card-row">
                           <div className="label"><i className="fa-solid fa-phone-slash" style={{color:'#be123c', marginRight:'5px'}}></i> Tentativas</div>
-                          <div className="value">{stats.semanal['w'+w].t}</div>
+                          <div className="value">{mStats.weeks[idx].t}</div>
                         </div>
                         <div className="week-card-row">
                           <div className="label"><i className="fa-solid fa-phone" style={{color:'#0d9488', marginRight:'5px'}}></i> Ligações</div>
@@ -1095,40 +1097,32 @@ function App() {
                             <input 
                               type="number" 
                               className="value-input-inline" 
-                              value={stats.semanal['w'+w].c} 
+                              value={mStats.weeks[idx].c} 
                               onChange={(e) => {
-                                const diff = parseInt(e.target.value || 0) - stats.semanal['w'+w].c;
-                                setStats(prev => {
-                                  const ns = {...prev};
-                                  ns.semanal['w'+w].c += diff;
-                                  return ns;
-                                });
+                                const diff = parseInt(e.target.value || 0) - mStats.weeks[idx].c;
+                                updateM(0, diff); // Atualiza no banco no dia selecionado para refletir a mudança
                               }}
                               style={{width:'40px', background:'none', border:'none', fontWeight:800, color:'#0d9488', outline:'none', textAlign:'right'}}
                             /> / {(stats.weeklyGoals?.c || 120) * (userRole === 'MANAGER' && !filterUserId ? 2 : 1)}
                           </div>
                         </div>
-                        <div className="progress-bar-bg"><div className="progress-bar-fill" style={{width: `${Math.min((stats.semanal['w'+w].c / ((stats.weeklyGoals?.c || 120) * (userRole === 'MANAGER' && !filterUserId ? 2 : 1))) * 100, 100)}%`, background:'#0d9488'}}></div></div>
+                        <div className="progress-bar-bg"><div className="progress-bar-fill" style={{width: `${Math.min((mStats.weeks[idx].c / ((stats.weeklyGoals?.c || 120) * (userRole === 'MANAGER' && !filterUserId ? 2 : 1))) * 100, 100)}%`, background:'#0d9488'}}></div></div>
                         <div className="week-card-row" style={{marginTop:'10px'}}>
                           <div className="label">🏢 Reuniões</div>
                           <div className="value" style={{display:'flex', alignItems:'center', gap:'5px'}}>
                             <input 
                               type="number" 
                               className="value-input-inline" 
-                              value={stats.semanal['w'+w].m} 
+                              value={mStats.weeks[idx].m} 
                               onChange={(e) => {
-                                const diff = parseInt(e.target.value || 0) - stats.semanal['w'+w].m;
-                                setStats(prev => {
-                                  const ns = {...prev};
-                                  ns.semanal['w'+w].m += diff;
-                                  return ns;
-                                });
+                                const diff = parseInt(e.target.value || 0) - mStats.weeks[idx].m;
+                                updateM(1, diff);
                               }}
                               style={{width:'30px', background:'none', border:'none', fontWeight:800, color:'#be123c', outline:'none', textAlign:'right'}}
                             /> / {(stats.weeklyGoals?.m || 6) * (userRole === 'MANAGER' && !filterUserId ? 2 : 1)}
                           </div>
                         </div>
-                        <div className="progress-bar-bg"><div className="progress-bar-fill" style={{width: `${Math.min((stats.semanal['w'+w].m / ((stats.weeklyGoals?.m || 6) * (userRole === 'MANAGER' && !filterUserId ? 2 : 1))) * 100, 100)}%`, background:'#be123c'}}></div></div>
+                        <div className="progress-bar-bg"><div className="progress-bar-fill" style={{width: `${Math.min((mStats.weeks[idx].m / ((stats.weeklyGoals?.m || 6) * (userRole === 'MANAGER' && !filterUserId ? 2 : 1))) * 100, 100)}%`, background:'#be123c'}}></div></div>
                         
                         <div className="week-card-row" style={{marginTop:'10px'}}>
                           <div className="label">🏆 Clientes</div>
@@ -1136,20 +1130,16 @@ function App() {
                             <input 
                               type="number" 
                               className="value-input-inline" 
-                              value={stats.semanal['w'+w].cl} 
+                              value={mStats.weeks[idx].cl} 
                               onChange={(e) => {
-                                const diff = parseInt(e.target.value || 0) - stats.semanal['w'+w].cl;
-                                setStats(prev => {
-                                  const ns = {...prev};
-                                  ns.semanal['w'+w].cl += diff;
-                                  return ns;
-                                });
+                                const diff = parseInt(e.target.value || 0) - mStats.weeks[idx].cl;
+                                updateM(2, diff);
                               }}
                               style={{width:'30px', background:'none', border:'none', fontWeight:800, color:'#0891b2', outline:'none', textAlign:'right'}}
                             /> / {(stats.weeklyGoals?.cl || 2) * (userRole === 'MANAGER' && !filterUserId ? 2 : 1)}
                           </div>
                         </div>
-                        <div className="progress-bar-bg"><div className="progress-bar-fill" style={{width: `${Math.min((stats.semanal['w'+w].cl / ((stats.weeklyGoals?.cl || 2) * (userRole === 'MANAGER' && !filterUserId ? 2 : 1))) * 100, 100)}%`, background:'#0891b2'}}></div></div>
+                        <div className="progress-bar-bg"><div className="progress-bar-fill" style={{width: `${Math.min((mStats.weeks[idx].cl / ((stats.weeklyGoals?.cl || 2) * (userRole === 'MANAGER' && !filterUserId ? 2 : 1))) * 100, 100)}%`, background:'#0891b2'}}></div></div>
                       </div>
                     ))}
                   </div>
