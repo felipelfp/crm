@@ -972,8 +972,14 @@ function App() {
                     <tbody>
                       {leads.filter(l => {
                         if (!l || !l.name) return false;
+                        
+                        // FILTRO DE PRIVACIDADE: Consultor só vê os seus leads, Gestora vê tudo
+                        const isOwner = l.consultant === username;
+                        if (userRole !== 'MANAGER' && !isOwner) return false;
+
                         const matchesSearch = l.name.toLowerCase().includes(searchTerm.toLowerCase());
                         const matchesCategory = l.category === currentBranch;
+                        
                         // Se houver busca, ignoramos o filtro de status "Pendente" para encontrar qualquer cliente
                         if (searchTerm) return matchesSearch;
                         return matchesCategory && !l.lastCall && !l.nextFollowUp && l.status === 'Pendente';
