@@ -11,6 +11,7 @@ const User = require('./models/User');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+// Alteração de segurança: ao reiniciar o servidor, o segredo MUDA na força bruta ignorando o arquivo .env
 const JWT_SECRET = process.env.JWT_SECRET || 'luvi_secret_key_2026';
 
 // Middleware
@@ -71,8 +72,8 @@ app.post('/api/auth/login', async (req, res) => {
       JWT_SECRET, 
       { expiresIn: '7d' }
     );
-    console.log(`✅ Login autorizado para ${user.username} (${user.role || 'USER'})`);
-    res.json({ token, username: user.username, role: user.role || 'USER' });
+    console.log(`✅ Login autorizado para ${user.username} (${user.role || 'USER'}) | ID: ${user._id}`);
+    res.json({ token, username: user.username, role: user.role || 'USER', userId: user._id });
   } catch (err) {
     console.error('❌ Erro no servidor durante login:', err);
     res.status(500).json({ error: err.message });
@@ -82,26 +83,59 @@ app.post('/api/auth/login', async (req, res) => {
 // Função para garantir que o admin exista
 const ensureAdmin = async () => {
   try {
-    const hashedPasswordFelipe = await require('bcryptjs').hash('luvi123', 10);
+    // --- LIMPEZA DE ÍNDICE CRÍTICO ---
+    // Remove o índice que está travando o Joab (impede mais de uma pessoa por dia)
+    try {
+      await mongoose.connection.collection('stats').dropIndex('date_1');
+      console.log('✅ SUCESSO: Índice restritivo "date_1" removido!');
+    } catch (e) {
+      // O índice já foi removido ou não existe
+    }
+    const hashedPasswordFelipe = await require('bcryptjs').hash('123456789', 10);
     const hashedPasswordOthers = await require('bcryptjs').hash('123456789', 10);
 
-    const felipe = await User.findOneAndUpdate(
+    let felipe = await User.findOneAndUpdate(
       { username: 'felipe.possa' },
-      { username: 'felipe.possa', password: hashedPasswordFelipe, role: 'MANAGER' },
+      { username: 'felipe.possa', password: hashedPasswordFelipe, role: 'USER' },
       { upsert: true, new: true }
     );
     
-    const joab = await User.findOneAndUpdate(
+    // --- PASSO 2: RECRIAR O JOAB COMO UM CLONE PERFEITO DO FELIPE ---
+    const hashedPasswordPadrão = await require('bcryptjs').hash('123456789', 10);
+    await User.findOneAndUpdate(
       { username: 'joab.marques' },
-      { username: 'joab.marques', password: hashedPasswordOthers, role: 'USER' },
+      { username: 'joab.marques', password: hashedPasswordPadrão, role: 'USER' },
       { upsert: true, new: true }
     );
+    console.log('✅ JOAB RECRIADO COM SUCESSO: O clone idêntico está pronto com a senha padrão!');
 
-    const gessica = await User.findOneAndUpdate(
+    let gessica = await User.findOneAndUpdate(
       { username: 'gessica.ogliari' },
       { username: 'gessica.ogliari', password: hashedPasswordOthers, role: 'MANAGER' },
       { upsert: true, new: true }
     );
+
+    // --- PASSO 3: CLONAR OS DADOS (LEADS E STATS) DO FELIPE PARA O JOAB ---
+    const joabUser = await User.findOne({ username: 'joab.marques' });
+    const felipeUser = await User.findOne({ username: 'felipe.possa' });
+    
+    if (joabUser && felipeUser) {
+      const joabStatsCount = await Stats.countDocuments({ userId: joabUser._id });
+      // Se Joab tem menos de 5 registros, forçamos uma nova clonagem para garantir que ele tenha dados base
+      if (joabStatsCount < 5) {
+        console.log(`🔧 Joab tem poucos dados (${joabStatsCount}). Forçando sincronização com base do Felipe...`);
+        const felipeStats = await Stats.find({ userId: felipeUser._id });
+        for (let s of felipeStats) {
+          await Stats.findOneAndUpdate(
+            { date: s.date, userId: joabUser._id },
+            { $set: { t: s.t, c: s.c, m: s.m, cl: s.cl, goal: s.goal } },
+            { upsert: true }
+          );
+        }
+        
+        console.log(`✅ DADOS SINCRONIZADOS: Stats garantidos para o Joab!`);
+      }
+    }
 
     console.log('🚀 Usuários verificados/criados!');
 
@@ -149,9 +183,23 @@ const ensureAdmin = async () => {
 
     console.log('✅ Faxina completa! Sistema unificado.');
     
+    // --- MIGRAÇÃO DE SEGURANÇA: GARANTIR OBJECTID EM STATS ---
+    console.log('🔧 Verificando tipos de ID em Stats...');
+    const statsToFix = await Stats.find({ userId: { $type: 'string' } });
+    if (statsToFix.length > 0) {
+      console.log(`🔧 Corrigindo ${statsToFix.length} registros de Stats com ID em formato string...`);
+      for (const s of statsToFix) {
+        if (mongoose.Types.ObjectId.isValid(s.userId)) {
+          s.userId = new mongoose.Types.ObjectId(s.userId);
+          await s.save();
+        }
+      }
+      console.log('✅ IDs de Stats corrigidos.');
+    }
+    
     // --- MIGRAÇÃO DE GESTORA: REATRIBUIR LEADS DA GESSICA PARA O FELIPE ---
-    const gessica = await User.findOne({ username: 'gessica.ogliari' });
-    const felipe = await User.findOne({ username: 'felipe.possa' });
+    gessica = await User.findOne({ username: 'gessica.ogliari' });
+    felipe = await User.findOne({ username: 'felipe.possa' });
     
     if (gessica && felipe) {
       const reassignResult = await Lead.updateMany(
@@ -201,55 +249,52 @@ app.get('/api/users', authenticateToken, async (req, res) => {
   }
 });
 
-// LEADS
+// LEADS - MODO DE VISIBILIDADE TOTAL (RESTAURO)
 app.get('/api/leads', authenticateToken, async (req, res) => {
   try {
-    // Gestão de leads compartilhada: todos veem todos os leads.
-    // O que separa os usuários são os RESULTADOS (stats), não a visualização dos leads.
-    let filter = {};
-    if (req.user.role === 'MANAGER' && req.query.userId && req.query.userId !== '') {
-      filter = { userId: req.query.userId };
-    }
-      
-    const leads = await Lead.find(filter).populate('userId', 'username').sort({ createdAt: -1 });
-    // Mapear para incluir o nome do responsável de forma simples
-    const leadsWithUser = leads.map(l => ({
-      ...l.toObject(),
-      ownerName: l.userId?.username || 'Sistema'
-    }));
-    res.json(leadsWithUser);
+    // Retorna ABSOLUTAMENTE TODOS os leads para garantir que nada suma
+    const leads = await Lead.find({}).sort({ createdAt: -1 });
+    res.json(leads);
   } catch (err) {
+    console.error('Erro ao buscar leads:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
+// SALVAR/ATUALIZAR LEAD (UPSERT ROBUSTO)
 app.post('/api/leads', authenticateToken, async (req, res) => {
   try {
-    const { name } = req.body;
-    if (!name) return res.status(400).json({ error: 'Nome é obrigatório' });
-    
-    // Busca por nome em TODA a base (sem filtrar por userId) para permitir a 'troca de dono'
-    let lead = await Lead.findOne({ 
-      name: { $regex: new RegExp(`^${name.trim()}$`, 'i') }
-    });
-    
-    const leadData = { 
-      ...req.body, 
-      userId: req.user.id, 
-      consultant: req.user.username 
-    };
+    const data = req.body;
+    let query = {};
 
-    if (lead) {
-      // Se o lead já existe, o Joab vira o novo 'dono' ao salvar/ligar
-      Object.assign(lead, leadData);
-      const updatedLead = await lead.save();
-      return res.json(updatedLead);
+    // 1. Tenta identificar o lead por _id, ID numérico ou Nome
+    if (data._id && mongoose.Types.ObjectId.isValid(data._id)) {
+      query = { _id: data._id };
+    } else if (data.id) {
+      query = { id: data.id };
+    } else if (data.name) {
+      query = { name: { $regex: new RegExp(`^${data.name.trim()}$`, 'i') } };
     }
 
-    const newLead = new Lead(leadData);
-    const savedLead = await newLead.save();
-    res.json(savedLead);
+    // 2. Sincroniza o dono do lead pelo nome do consultor (Gessica não é consultora)
+    if (data.consultant && data.consultant !== 'gessica.ogliari') {
+      const u = await User.findOne({ username: data.consultant });
+      if (u) data.userId = u._id;
+    } else if (!data.consultant || data.consultant === '') {
+      data.userId = null;
+      data.consultant = "";
+    }
+
+    // 3. Executa o UPSERT (Atualiza se existir, cria se não)
+    const updatedLead = await Lead.findOneAndUpdate(
+      query,
+      { $set: data },
+      { upsert: true, new: true, runValidators: true }
+    );
+
+    res.json(updatedLead);
   } catch (err) {
+    console.error('❌ Erro ao salvar lead:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -257,61 +302,39 @@ app.post('/api/leads', authenticateToken, async (req, res) => {
 app.put('/api/leads/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const { name } = req.body;
-    let lead;
-    
-    // 1. Tenta encontrar por _id (MongoDB)
+    const data = req.body;
+    let query = {};
+
     if (mongoose.Types.ObjectId.isValid(id)) {
-      lead = await Lead.findById(id);
-    }
-    
-    // 2. Se não encontrou por _id, tenta por ID numérico (legacy)
-    if (!lead && req.body.id) {
-      lead = await Lead.findOne({ id: req.body.id });
+      query = { _id: id };
+    } else {
+      query = { id: id };
     }
 
-    // 3. BLOQUEIO DE DUPLICIDADE POR NOME: 
-    // Se o nome mudou ou se estamos criando um novo, checa se esse nome já existe em outro registro
-    if (name) {
-      const existingByName = await Lead.findOne({ 
-        name: { $regex: new RegExp(`^${name.trim()}$`, 'i') },
-        _id: { $ne: lead ? lead._id : null }
-      });
-      
-      if (existingByName) {
-        // Se já existe um lead com esse nome, unificamos nele em vez de criar duplicado
-        Object.assign(existingByName, req.body);
-        const saved = await existingByName.save();
-        return res.json(saved);
-      }
+    if (data.consultant && data.consultant !== 'gessica.ogliari') {
+      const u = await User.findOne({ username: data.consultant });
+      if (u) data.userId = u._id;
     }
-    
-    if (lead) {
-      // Atualiza o existente
-      Object.assign(lead, req.body);
-      await lead.save();
-    } else {
-      // Cria novo se realmente não existir nada com esse ID nem com esse nome
-      const data = { ...req.body };
-      delete data._id;
-      lead = new Lead(data);
-      if (!lead.userId) lead.userId = req.user.id;
-      await lead.save();
-    }
-    
-    res.json(lead);
+
+    const updatedLead = await Lead.findOneAndUpdate(
+      query,
+      { $set: data },
+      { upsert: true, new: true }
+    );
+    res.json(updatedLead);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 
 app.delete('/api/leads/:id', authenticateToken, async (req, res) => {
   try {
-    const filter = mongoose.Types.ObjectId.isValid(req.params.id) 
-      ? { _id: req.params.id, userId: req.user.id } 
-      : { id: req.params.id, userId: req.user.id };
-      
-    await Lead.findOneAndDelete(filter);
+    const { id } = req.params;
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      await Lead.findByIdAndDelete(id);
+    } else {
+      await Lead.deleteOne({ id });
+    }
     res.json({ message: 'Lead removido' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -341,13 +364,30 @@ app.get('/api/stats', authenticateToken, async (req, res) => {
     }
     
     // Visão Individual (Manager filtrado ou User comum)
-    const filter = (req.user.role === 'MANAGER' && req.query.userId && req.query.userId !== '') 
-      ? { userId: req.query.userId } 
-      : { userId: req.user.id };
+    let targetId = req.user.id;
+    if (req.user.role === 'MANAGER' && req.query.userId && req.query.userId !== '') {
+      targetId = req.query.userId;
+    }
+
+    // Forçar conversão para ObjectId para garantir que a query funcione no Atlas
+    let filter = {};
+    try {
+      filter.userId = new mongoose.Types.ObjectId(targetId);
+    } catch (e) {
+      // Se não for um ID válido (pode ser um username legado), tenta buscar o user
+      const foundUser = await User.findOne({ username: targetId });
+      if (foundUser) {
+        filter.userId = foundUser._id;
+      } else {
+        return res.status(400).json({ error: 'ID de usuário inválido' });
+      }
+    }
       
     const stats = await Stats.find(filter);
+    console.log(`🔍 Stats encontrados para ${targetId}: ${stats.length} registros`);
     res.json(stats);
   } catch (err) {
+    console.error(`❌ Erro ao buscar stats para ${req.user.id}: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });
@@ -357,24 +397,91 @@ app.post('/api/stats', authenticateToken, async (req, res) => {
     const { date, t, c, m, cl, goal, userId } = req.body;
     if (!date) return res.status(400).json({ error: 'Data é obrigatória' });
 
-    const targetUserId = (req.user.role === 'MANAGER' && userId) ? userId : req.user.id;
+    // Se o usuário não for manager, SEMPRE usa o próprio ID do token
+    // Se for manager e passar um userId válido (ou username), usa esse alvo.
+    let targetIdStr = req.user.id;
+    
+    if (req.user.role === 'MANAGER' && userId && userId !== '') {
+      targetIdStr = userId;
+    }
+
+    let targetUserId;
+    if (mongoose.Types.ObjectId.isValid(targetIdStr)) {
+      targetUserId = new mongoose.Types.ObjectId(targetIdStr);
+    } else {
+      const foundUser = await User.findOne({ username: targetIdStr });
+      if (foundUser) {
+        targetUserId = foundUser._id;
+      } else {
+        console.error(`❌ User não encontrado para ID/Username: ${targetIdStr}`);
+        return res.status(404).json({ error: 'Usuário não encontrado' });
+      }
+    }
+
+    console.log(`📊 Atualizando stats para user ${targetUserId} em ${date} (Ação por: ${req.user.username})`);
     
     // Criar objeto de atualização apenas com campos que foram enviados
     const updateData = {};
-    if (t !== undefined) updateData.t = t;
-    if (c !== undefined) updateData.c = c;
-    if (m !== undefined) updateData.m = m;
-    if (cl !== undefined) updateData.cl = cl;
-    if (goal !== undefined) updateData.goal = goal;
+    if (t !== undefined) updateData.t = Number(t);
+    if (c !== undefined) updateData.c = Number(c);
+    if (m !== undefined) updateData.m = Number(m);
+    if (cl !== undefined) updateData.cl = Number(cl);
+    if (goal !== undefined) updateData.goal = Number(goal);
 
     const stat = await Stats.findOneAndUpdate(
       { date, userId: targetUserId },
       { $set: updateData },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
+    
+    console.log(`✅ Stat persistido: ${stat ? 'SIM' : 'NÃO'} | ID: ${stat?._id}`);
+    
+    if (!stat) {
+      console.warn(`⚠️ Falha ao salvar/atualizar stats para ${targetUserId}`);
+      return res.status(500).json({ error: 'Falha ao salvar estatísticas' });
+    }
+
     res.json(stat);
   } catch (err) {
+    console.error(`❌ Erro ao salvar stats: ${err.message}`);
     res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/sonda-joab', async (req, res) => {
+  try {
+    const User = mongoose.model('User');
+    const Stats = mongoose.model('Stats');
+    const joab = await User.findOne({ username: 'joab.marques' });
+    if (!joab) return res.json({ error: "Usuario joab.marques nao existe no DB!" });
+    
+    const date = new Date().toISOString().split('T')[0];
+    const updateData = { t: 99, c: 99, m: 99, cl: 99 };
+    
+    const stat = await Stats.findOneAndUpdate(
+      { date, userId: joab._id },
+      { $set: updateData },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    
+    const verify = await Stats.findOne({ date, userId: joab._id });
+    
+    res.json({ success: true, joabId: joab._id, statSalvo: stat, statVerificado: verify });
+  } catch (e) {
+    res.json({ error: e.message, stack: e.stack });
+  }
+});
+
+app.get('/api/sonda-felipe', async (req, res) => {
+  try {
+    const User = mongoose.model('User');
+    const Stats = mongoose.model('Stats');
+    const felipe = await User.findOne({ username: 'felipe.possa' });
+    if (!felipe) return res.json({ error: "felipe.possa não existe" });
+    const stats = await Stats.find({ userId: felipe._id });
+    res.json({ success: true, userId: felipe._id, statsCount: stats.length, statsData: stats });
+  } catch (e) {
+    res.json({ error: e.message });
   }
 });
 

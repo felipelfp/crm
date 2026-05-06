@@ -46,7 +46,8 @@ function App() {
     if (userRole !== 'MANAGER') return;
     try {
       const data = await userService.getUsers();
-      setTeam(data);
+      // FILTRO DEFINITIVO: Remove Gessica ignorando se é maiúsculo ou minúsculo
+      setTeam(data.filter(u => u.username && u.username.toLowerCase() !== 'gessica.ogliari'));
     } catch (err) {
       console.error('Erro ao carregar equipe:', err);
     }
@@ -64,13 +65,15 @@ function App() {
         localStorage.removeItem(`luvi_leads_${oldUser}_v1`);
       }
 
+      const finalRole = (data.username.toLowerCase() === 'gessica.ogliari') ? 'MANAGER' : 'USER';
+      
       setIsLoggedIn(true);
       setUsername(data.username);
-      setUserRole(data.role);
+      setUserRole(finalRole);
       sessionStorage.setItem('luvi_auth', 'true');
       sessionStorage.setItem('luvi_token', data.token);
       sessionStorage.setItem('luvi_username', data.username);
-      sessionStorage.setItem('luvi_role', data.role);
+      sessionStorage.setItem('luvi_role', finalRole);
       setLoginError('');
       
       // Forçar recarregamento para garantir que o estado inicial do usuário seja aplicado
@@ -127,8 +130,32 @@ function App() {
         if (!seenNames.has(name) && name.length > 2) {
           seenNames.add(name);
           
-          // Preserva a categoria que vem do banco/arquivo sem tentar adivinhar
-          const cat = l.category || 'SERVIÇOS';
+          // Normalização de Categorias ULTRA FLEXÍVEL (Com busca por palavra-chave no nome)
+          let cat = (l.category || '').toUpperCase().trim();
+          const name = (l.name || '').toUpperCase();
+
+          // Lógica para ALIMENTÍCIO
+          if (cat.includes('ALIMENTI') || cat.includes('COMIDA') || cat.includes('REFEI') || cat.includes('FOOD') || cat.includes('NUTRI') || 
+              name.includes('RESTAURANTE') || name.includes('LANCHES') || name.includes('PIZZA') || name.includes('GASTRO') || name.includes('BUFFET')) {
+            cat = 'ALIMENTÍCIO';
+          } 
+          // Lógica para ESCOLAS
+          else if (cat.includes('ESCOLA') || cat.includes('COLÉGIO') || cat.includes('ENSINO') || cat.includes('EDUCA') || 
+                   name.includes('COLEGIO') || name.includes('ESCOLA') || name.includes('CENTRO DE ENSINO')) {
+            cat = 'ESCOLAS';
+          }
+          // Lógica para FACULDADES
+          else if (cat.includes('FACULDADE') || cat.includes('UNIVERSIDADE') || name.includes('FACULDADE') || name.includes('UNIV')) {
+            cat = 'FACULDADES';
+          }
+          // Lógica para CONSTRUTORAS
+          else if (cat.includes('CONSTRUTORA') || cat.includes('ENGENHARIA') || name.includes('CONSTRUTORA') || name.includes('ENG')) {
+            cat = 'CONSTRUTORAS';
+          }
+          
+          if (!['CONSTRUTORAS', 'ESCOLAS', 'FACULDADES', 'SERVIÇOS', 'FACILITIES', 'ALIMENTÍCIO'].includes(cat)) {
+            cat = 'SERVIÇOS';
+          }
           
           finalLeads.push({
             id: l.id || Math.random(),
@@ -142,7 +169,8 @@ function App() {
             category: cat,
             address: l.address || '',
             regional: l.regional || '',
-            history: l.history || []
+            history: l.history || [],
+            consultant: l.consultant || ''
           });
         }
       });
@@ -207,58 +235,88 @@ function App() {
       const serverLeads = await leadService.getLeads(filterUserId);
       setIsOnline(true);
       if (serverLeads && Array.isArray(serverLeads)) {
-        // --- DEFESA DE LEADS (EVITA SUMIÇO DE NOTAS/STATUS) ---
-        const isRecentAction = (Date.now() - lastActionTimeRef.current < 30000);
+        // --- DEFESA DE LEADS: 10 segundos de carência em vez de 30 ---
+        const isRecentAction = (Date.now() - lastActionTimeRef.current < 10000);
         if (!isRecentAction) {
-          setLeads(serverLeads);
-          // Atualiza localStorage apenas se não houver ação recente para não corromper o que o usuário está fazendo
-          localStorage.setItem(`luvi_leads_${username}_v1`, JSON.stringify(serverLeads));
+          // Unificar Banco de Dados Oficial + Arquivo Local
+          const serverNames = new Set(serverLeads.map(l => (l.name || "").toUpperCase().trim()));
+          
+          const localOnly = leadsData.filter(l => {
+            if(!l || !l.name) return false;
+            return !serverNames.has(l.name.toUpperCase().trim());
+          });
+          
+          const formattedLocal = localOnly.map(l => {
+            let cat = (l.category || 'SERVIÇOS').toUpperCase().trim();
+            if (cat === 'ALIMENTÍCIOS' || cat === 'ALIMENTICIOS') cat = 'ALIMENTÍCIO';
+            if (cat === 'CONSTRUÇÃO') cat = 'CONSTRUTORAS';
+            if (!['CONSTRUTORAS', 'ESCOLAS', 'FACULDADES', 'SERVIÇOS', 'FACILITIES', 'ALIMENTÍCIO'].includes(cat)) {
+              cat = 'SERVIÇOS'; 
+            }
+            return {
+              id: l.id || Math.random(),
+              name: l.name,
+              phone: l.phone || '',
+              category: cat,
+              status: l.status || 'Pendente',
+              address: l.address || '',
+              history: l.history || [],
+              consultant: l.consultant || ''
+            };
+          });
+
+          const unificados = [...serverLeads, ...formattedLocal];
+          
+          setLeads(unificados);
+          localStorage.setItem(`luvi_leads_${username}_v1`, JSON.stringify(unificados));
         }
 
-        if ((username === 'joab.marques' || username === 'felipe.possa') && !filterUserId) {
-          const localSaved = localStorage.getItem(`luvi_leads_${username}_v1`);
-          if (localSaved) {
-            const localLeads = JSON.parse(localSaved);
-            const serverNames = new Set(serverLeads.map(l => (l.name || "").toUpperCase().trim()));
-            localLeads.forEach(l => {
-              const name = (l.name || "").toUpperCase().trim();
-              if (name && !serverNames.has(name)) {
-                leadService.saveLead(l).catch(() => {});
-              }
-            });
-          }
-        }
       }
       
       const serverStats = await statService.getStats(filterUserId);
       if (serverStats && Array.isArray(serverStats)) {
+        const getDynamicGoal = (dStr) => {
+          if (!dStr) return 30;
+          const parts = dStr.split('-');
+          if (parts.length !== 3) return 30;
+          const day = new Date(parts[0], parts[1] - 1, parts[2]).getDay();
+          let base = 30;
+          if (day === 1 || day === 5) base = 15; // Segunda e Sexta
+          if (day === 0 || day === 6) base = 0;  // Fim de Semana
+          return (!filterUserId && userRole === 'MANAGER') ? base * 2 : base;
+        };
+
         const statsMap = {};
         serverStats.forEach(s => { 
           if(s && s.date) {
-            const baseG = (!filterUserId && userRole === 'MANAGER') ? 60 : 30;
+            const baseG = getDynamicGoal(s.date);
             statsMap[s.date] = { 
               t: s.t || 0, 
               c: s.c || 0, 
               m: s.m || 0, 
               cl: s.cl || 0, 
-              goal: s.goal || baseG 
+              goal: s.goal || baseG
             };
           } 
         });
+
         setStats(prev => {
-          const newStats = { ...prev, byDate: statsMap };
-          const defaultGoal = (!filterUserId && userRole === 'MANAGER') ? 60 : 30;
+          const isRecentAction = (Date.now() - lastActionTimeRef.current < 15000); // 15s de blindagem
+          if (isRecentAction) return prev;
+
+          // Mesclagem Inteligente: Não apaga dados locais se o servidor vier vazio para o dia de hoje
+          // mas o local tiver dados. Isso protege contra falhas momentâneas de sincronismo.
+          const newStats = { ...prev, byDate: { ...prev.byDate, ...statsMap } };
           
-          // --- DEFESA DE DADOS (SOLUÇÃO FINAL PARA O SUMIÇO) ---
-          const isRecentAction = (Date.now() - lastActionTimeRef.current < 30000);
-          
-          if (isRecentAction && prev.diaria) {
-            newStats.diaria = prev.diaria;
+          if (statsMap[selectedDate]) {
+            newStats.diaria = statsMap[selectedDate];
           } else {
-            if (statsMap[selectedDate]) {
-              newStats.diaria = statsMap[selectedDate];
-            } else {
+            // Se o servidor não tem nada para a data selecionada, mas o local tem, MANTÉM o local
+            if (!prev.byDate[selectedDate]) {
+              const defaultGoal = getDynamicGoal(selectedDate);
               newStats.diaria = { t: 0, c: 0, m: 0, cl: 0, goal: defaultGoal };
+            } else {
+              newStats.diaria = prev.byDate[selectedDate];
             }
           }
           
@@ -267,8 +325,10 @@ function App() {
       }
 
       if (userRole === 'MANAGER') {
-        const tStats = await statService.getTeamStats(selectedDate);
-        if (tStats && Array.isArray(tStats)) setTeamStats(tStats);
+        const teamRes = await statService.getTeamStats(selectedDate);
+        setTeamStats(teamRes || []);
+      } else {
+        setTeamStats([]);
       }
     } catch (err) {
       setIsOnline(false);
@@ -277,11 +337,10 @@ function App() {
 
   useEffect(() => {
     loadData();
+    // Radar Turbo: Checa a cada 5 segundos
     const interval = setInterval(() => {
-      if (Date.now() - lastActionTimeRef.current > 30000) {
-        loadData();
-      }
-    }, 10000);
+      loadData();
+    }, 5000);
     return () => clearInterval(interval);
   }, [loadData]);
 
@@ -399,19 +458,27 @@ function App() {
   const updateM = (t, v) => {
     const dKey = selectedDate;
     lastActionTimeRef.current = Date.now();
+    
     setStats(prev => {
       const newStats = JSON.parse(JSON.stringify(prev));
-      if (!newStats.byDate[dKey]) newStats.byDate[dKey] = {t:0, c:0, m:0, cl:0};
+      if (!newStats.byDate[dKey]) newStats.byDate[dKey] = {t:0, c:0, m:0, cl:0, goal: (userRole === 'MANAGER' && !filterUserId) ? 60 : 30};
+      
       const day = newStats.byDate[dKey];
       if(t===0) { day.c+=v; day.t+=v; }
       if(t===1) { day.m+=v; }
       if(t===2) { day.cl+=v; }
       if(t===3) { day.t+=v; }
-      newStats.diaria = {...day};
       
+      newStats.diaria = {...day};
       localStorage.setItem(`luvi_crm_${username}_v1`, JSON.stringify(newStats));
       
-      statService.updateStats({ date: dKey, ...day, userId: filterUserId }).catch(() => {});
+      // Sincronização com o banco
+      statService.updateStats({ date: dKey, ...day, userId: filterUserId })
+        .then(() => console.log("✅ Stats salvos no servidor"))
+        .catch(err => {
+          console.error("❌ Erro ao salvar stats no servidor:", err);
+          setIsOnline(false);
+        });
       
       return newStats;
     });
@@ -419,12 +486,14 @@ function App() {
 
   const setManualValue = (t, val) => {
     const dKey = selectedDate;
-    const newValue = val === '' ? 0 : parseInt(val);
+    // Força remoção de zeros para não bugar a tela
+    const cleanedVal = String(val).replace(/^0+/, '');
+    const newValue = cleanedVal === '' ? 0 : parseInt(cleanedVal);
     if (isNaN(newValue)) return;
     lastActionTimeRef.current = Date.now();
     setStats(prev => {
       const newStats = JSON.parse(JSON.stringify(prev));
-      if (!newStats.byDate[dKey]) newStats.byDate[dKey] = {t:0, c:0, m:0, cl:0};
+      if (!newStats.byDate[dKey]) newStats.byDate[dKey] = {t:0, c:0, m:0, cl:0, goal: (userRole === 'MANAGER' && !filterUserId) ? 60 : 30};
       const day = newStats.byDate[dKey];
       if(t===0) day.c = newValue;
       if(t===1) day.m = newValue;
@@ -432,7 +501,14 @@ function App() {
       if(t===3) day.t = newValue;
       newStats.diaria = {...day};
       localStorage.setItem(`luvi_crm_${username}_v1`, JSON.stringify(newStats));
-      statService.updateStats({ date: dKey, ...day, userId: filterUserId }).catch(() => {});
+      
+      statService.updateStats({ date: dKey, ...day, userId: filterUserId })
+        .then(() => console.log("✅ Stats manuais salvos"))
+        .catch(err => {
+          console.error("❌ Erro ao salvar stats manuais:", err);
+          setIsOnline(false);
+        });
+        
       return newStats;
     });
   };
@@ -444,20 +520,29 @@ function App() {
     lastActionTimeRef.current = Date.now();
     setStats(prev => {
       const newStats = JSON.parse(JSON.stringify(prev));
-      if (!newStats.byDate[dKey]) newStats.byDate[dKey] = {t:0, c:0, m:0, cl:0};
+      if (!newStats.byDate[dKey]) newStats.byDate[dKey] = {t:0, c:0, m:0, cl:0, goal: newValue};
       newStats.byDate[dKey].goal = newValue;
       localStorage.setItem(`luvi_crm_${username}_v1`, JSON.stringify(newStats));
-      statService.updateStats({ date: dKey, ...newStats.byDate[dKey], userId: filterUserId }).catch(() => {});
+      
+      statService.updateStats({ date: dKey, ...newStats.byDate[dKey], userId: filterUserId })
+        .then(() => console.log("✅ Meta salva no servidor"))
+        .catch(err => {
+          console.error("❌ Erro ao salvar meta:", err);
+        });
+        
       return newStats;
     });
   };
 
   const updatePeriodValue = (type, newVal, currentTotal) => {
-    const value = newVal === '' ? 0 : parseInt(newVal);
+    // Força a remoção de zeros à esquerda (ex: "01" vira "1")
+    const cleanedVal = String(newVal).replace(/^0+/, '');
+    const value = cleanedVal === '' ? 0 : parseInt(cleanedVal);
+    
     if (isNaN(value)) return;
     const diff = value - currentTotal;
-    if (diff === 0) return;
-
+    
+    // Removido o bloqueio de diff === 0 para forçar o React a re-renderizar a tela e limpar o "01"
     const tMap = { 'c': 0, 'm': 1, 'cl': 2, 't': 3 };
     updateM(tMap[type], diff);
   };
@@ -542,7 +627,9 @@ function App() {
   const saveLead = (data) => {
     lastActionTimeRef.current = Date.now();
     const tempId = data.id === 'new' ? Date.now() : data.id;
-    const finalData = { ...data, id: tempId, consultant: data.consultant || username };
+    // Permite que o consultor seja vazio (volta para a base)
+    const finalConsultant = (data.consultant === "" || data.consultant === null) ? "" : (data.consultant || username);
+    const finalData = { ...data, id: tempId, consultant: finalConsultant };
     
     setLeads(prev => {
       const updated = data.id === 'new' ? [finalData, ...prev] : prev.map(l => (l._id && l._id === data._id) || (l.id === data.id) ? finalData : l);
@@ -639,7 +726,7 @@ function App() {
             <div className="header-left" style={{display:'flex', alignItems:'center', gap:'20px'}}>
               <h2 style={{display:'flex', alignItems:'center', gap:'15px', margin:0}}>
                 <i className="fa-solid fa-box" style={{color:'var(--primary)'}}></i>
-                DASHBOARD GERENCIAL — SISTEMA DE VENDAS
+                DASHBOARD GERENCIAL — SISTEMA ATUALIZADO
               </h2>
               
               <div className={`status-badge ${isOnline ? 'online' : 'offline'}`} style={{fontSize:'0.65rem', padding:'4px 10px'}}>
@@ -760,19 +847,59 @@ function App() {
                 </div>
 
                 {/* MONITORAMENTO DE PERFORMANCE (GESTORA) */}
-                {userRole === 'MANAGER' && !filterUserId && teamStats.length > 0 && (
+                {userRole === 'MANAGER' && teamStats.length > 0 && (
                   <div style={{padding:'20px', borderTop:'1px solid #f1f5f9', background:'#fff'}}>
-                    <div style={{fontSize:'0.75rem', fontWeight:800, color:'#1e293b', marginBottom:'20px', display:'flex', alignItems:'center', gap:'10px'}}>
-                      <div style={{width:'4px', height:'16px', background:'var(--primary)', borderRadius:'2px'}}></div>
-                      PERFORMANCE DA EQUIPE HOJE
+                    <div style={{fontSize:'0.75rem', fontWeight:800, color:'#1e293b', marginBottom:'20px', display:'flex', alignItems:'center', justifyContent:'space-between'}}>
+                      <div style={{display:'flex', alignItems:'center', gap:'10px'}}>
+                        <div style={{width:'4px', height:'16px', background:'var(--primary)', borderRadius:'2px'}}></div>
+                        {filterUserId ? 'DETALHE DO CONSULTOR' : 'PERFORMANCE DA EQUIPE HOJE'}
+                      </div>
+                      {filterUserId && (
+                        <div style={{display:'flex', gap:'10px'}}>
+                          <button 
+                            onClick={() => {
+                              if(window.confirm('Zerar as estatísticas deste consultor hoje?')) {
+                                const cleared = {t:0, c:0, m:0, cl:0};
+                                setStats(prev => ({...prev, byDate: {...prev.byDate, [selectedDate]: cleared}, diaria: cleared}));
+                                statService.updateStats({ date: selectedDate, ...cleared, userId: filterUserId }).catch(() => {});
+                                lastActionTimeRef.current = Date.now();
+                                alert('Estatísticas zeradas com sucesso!');
+                              }
+                            }}
+                            style={{background:'rgba(239, 68, 68, 0.1)', color:'#ef4444', border:'none', padding:'4px 12px', borderRadius:'10px', fontSize:'0.6rem', fontWeight:800, cursor:'pointer'}}
+                          >
+                            <i className="fa-solid fa-trash-can" style={{marginRight:'5px'}}></i> ZERA DIA
+                          </button>
+                          <button 
+                            onClick={() => setFilterUserId('')}
+                            style={{background:'rgba(37, 99, 235, 0.1)', color:'var(--primary)', border:'none', padding:'4px 12px', borderRadius:'10px', fontSize:'0.6rem', fontWeight:800, cursor:'pointer'}}
+                          >
+                            <i className="fa-solid fa-users" style={{marginRight:'5px'}}></i> VER TODA EQUIPE
+                          </button>
+                        </div>
+                      )}
                     </div>
                     <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(320px, 1fr))', gap:'25px'}}>
-                      {teamStats.map(member => {
+                      {teamStats.filter(m => !filterUserId || m.userId === filterUserId || m.username === filterUserId).map(member => {
                         const s = member.stats;
                         const callGoal = s.goal || 30;
                         const callPerc = Math.min(100, (s.c / callGoal) * 100);
                         return (
-                          <div key={member.userId} className="manager-team-card" style={{background:'#fff', borderRadius:'16px', padding:'20px', border:'1px solid #e2e8f0', boxShadow:'0 4px 6px -1px rgba(0,0,0,0.05)'}}>
+                        <div 
+                          key={member.userId} 
+                          className="manager-team-card" 
+                          onClick={() => setFilterUserId(member.userId)}
+                          style={{
+                            background:'#fff', 
+                            borderRadius:'16px', 
+                            padding:'20px', 
+                            border: filterUserId ? '2px solid var(--primary)' : '1px solid #e2e8f0', 
+                            boxShadow: filterUserId ? '0 10px 15px -3px rgba(37, 99, 235, 0.1)' : '0 4px 6px -1px rgba(0,0,0,0.05)',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s ease',
+                            transform: filterUserId ? 'scale(1.02)' : 'none'
+                          }}
+                        >
                             <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'15px'}}>
                               <div style={{display:'flex', alignItems:'center', gap:'10px'}}>
                                 <div style={{width:'35px', height:'35px', background:'var(--primary)', color:'#fff', borderRadius:'10px', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:800, fontSize:'0.9rem'}}>
@@ -973,9 +1100,13 @@ function App() {
                       {leads.filter(l => {
                         if (!l || !l.name) return false;
                         
-                        // FILTRO DE PRIVACIDADE: Consultor só vê os seus leads, Gestora vê tudo
-                        const isOwner = l.consultant === username;
-                        if (userRole !== 'MANAGER' && !isOwner) return false;
+                        // Filtro de Privacidade: Consultores vêem apenas o que é deles.
+                        // Gestora vê tudo ou filtra por quem ela escolheu no topo.
+                        const isOwner = (l.consultant && l.consultant.toLowerCase() === username.toLowerCase());
+                        const managerViewingAll = (userRole === 'MANAGER' && !filterUserId);
+                        const managerViewingSpecific = (userRole === 'MANAGER' && filterUserId && (l.consultant === filterUserId || l.userId === filterUserId));
+                        
+                        if (!isOwner && !managerViewingAll && !managerViewingSpecific) return false;
 
                         const matchesSearch = l.name.toLowerCase().includes(searchTerm.toLowerCase());
                         const matchesCategory = l.category === currentBranch;
@@ -1034,12 +1165,12 @@ function App() {
               });
             };
 
-            // FILTRO DE PRIVACIDADE: Usuário comum só vê os SEUS leads na Agenda/Resultados
+            // Filtro de Privacidade: Cada consultor vê o que é seu. Gestora vê tudo ou filtro.
             const myLeads = leads.filter(l => {
-              if (userRole === 'MANAGER') return true;
-              // No back-end o userId pode vir como objeto ou ID string. 
-              // Comparamos com o consultant (nome) que é mais seguro agora.
-              return l.consultant === username;
+              const isOwner = (l.consultant && l.consultant.toLowerCase() === username.toLowerCase());
+              const managerViewingAll = (userRole === 'MANAGER' && !filterUserId);
+              const managerViewingSpecific = (userRole === 'MANAGER' && filterUserId && (l.consultant === filterUserId || l.userId === filterUserId));
+              return isOwner || managerViewingAll || managerViewingSpecific;
             });
 
             // Resultados: Leads contatados (não importa o dia, para não sumir)
@@ -1075,11 +1206,24 @@ function App() {
                             {userRole === 'MANAGER' && <td style={{fontSize:'0.7rem', fontWeight:800, color:'#64748b'}}>{l.consultant || '—'}</td>}
                             <td><span className="badge" style={{background:'#dcfce7', color:'#166534', padding:'4px 8px', borderRadius:'4px', fontSize:'0.6rem', fontWeight:800}}>{l.status}</span></td>
                             <td>{l.lastCall?.split('-').reverse().join('/') || 'Hoje'}</td>
-                            <td><button className="btn-editar" onClick={() => openLeadModal(l)}>Ver Ficha</button></td>
+                             <td>
+                               <div style={{display:'flex', gap:'8px'}}>
+                                 <button className="btn-editar" style={{padding:'6px 12px', fontSize:'0.65rem', fontWeight:700}} onClick={() => openLeadModal(l)}>Ver Ficha</button>
+                                 <button 
+                                   className="btn-editar" 
+                                   style={{padding:'6px 12px', fontSize:'0.65rem', fontWeight:700, background:'#f1f5f9', color:'#475569'}} 
+                                   onClick={() => {
+                                     if(window.confirm(`Devolver ${l.name} para a base (Gestão)?`)) {
+                                       saveLead({...l, status: 'Pendente', lastCall: '', nextFollowUp: '', consultant: ''});
+                                     }
+                                   }}
+                                 >Voltar</button>
+                               </div>
+                             </td>
                           </tr>
                         ))}
                         {resultsLeads.length === 0 && (
-                          <tr><td colSpan="4" style={{textAlign:'center', padding:'30px', color:'#94a3b8'}}>Nenhuma ligação registrada ainda.</td></tr>
+                          <tr><td colSpan="5" style={{textAlign:'center', padding:'30px', color:'#94a3b8'}}>Nenhuma ligação registrada ainda.</td></tr>
                         )}
                       </tbody>
                     </table>
@@ -1121,6 +1265,15 @@ function App() {
                                   }
                                 }}>Sucesso</button>
                                 <button className="btn-editar" style={{padding:'6px 12px', fontSize:'0.65rem', fontWeight:700}} onClick={() => openLeadModal(l)}>Reagendar</button>
+                                <button 
+                                  className="btn-editar" 
+                                  style={{padding:'6px 12px', fontSize:'0.65rem', fontWeight:700, background:'#f1f5f9', color:'#475569'}} 
+                                  onClick={() => {
+                                    if(window.confirm(`Devolver ${l.name} para a base (Gestão)?`)) {
+                                      saveLead({...l, status: 'Pendente', lastCall: '', nextFollowUp: '', consultant: ''});
+                                    }
+                                  }}
+                                >Voltar</button>
                               </div>
                             </td>
                           </tr>
@@ -1551,10 +1704,14 @@ function App() {
                 </div>
                 <div className="form-group-modal">
                   <label style={{fontSize:'0.65rem', fontWeight:800, color:'#64748b', marginBottom:'8px', display:'block'}}>CONSULTOR RESPONSÁVEL</label>
-                  <select id="edit-consultant" defaultValue={selectedLead.consultant || username} style={{width:'100%', padding:'12px', border:'1px solid #e2e8f0', borderRadius:'8px', fontSize:'0.9rem', fontWeight:800, background:'#f8fafc', color:'var(--primary)'}}>
+                  <select 
+                    id="edit-consultant" 
+                    defaultValue={(selectedLead.consultant && selectedLead.consultant.toLowerCase() !== 'gessica.ogliari') ? selectedLead.consultant : ""} 
+                    style={{width:'100%', padding:'12px', border:'1px solid #e2e8f0', borderRadius:'8px', fontSize:'0.9rem', fontWeight:800, background:'#f8fafc', color:'var(--primary)'}}
+                  >
+                    <option value="">-- Sem Consultor (Base) --</option>
                     <option value="joab.marques">joab.marques</option>
                     <option value="felipe.possa">felipe.possa</option>
-                    <option value="gessica.ogliari">gessica.ogliari</option>
                   </select>
                 </div>
               </div>
