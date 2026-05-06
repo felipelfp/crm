@@ -239,11 +239,12 @@ function App() {
       }
     };
     const interval = setInterval(() => {
-      // SÓ ATUALIZA SE NÃO HOUVER AÇÃO RECENTE (Evita sobrescrever o que o usuário está fazendo)
-      if (Date.now() - lastActionTime > 4000) {
+      // SÓ ATUALIZA SE NÃO HOUVER AÇÃO RECENTE POR 60 SEGUNDOS
+      // Isso evita que o servidor 'atropele' um clique rápido (como +1 Tentativa)
+      if (Date.now() - lastActionTime > 60000) {
         loadData();
       }
-    }, 2000);
+    }, 30000);
     return () => clearInterval(interval);
   }, [isLoggedIn, filterUserId, userRole, lastActionTime]);
 
@@ -542,9 +543,12 @@ function App() {
 
   const getLocalDate = () => {
     const d = new Date();
-    const offset = d.getTimezoneOffset();
-    const local = new Date(d.getTime() - (offset * 60 * 1000));
-    return local.toISOString().split('T')[0];
+    // Ajuste rigoroso para o fuso de Brasília (GMT-3)
+    const brDate = new Date(d.toLocaleString("en-US", {timeZone: "America/Sao_Paulo"}));
+    const year = brDate.getFullYear();
+    const month = String(brDate.getMonth() + 1).padStart(2, '0');
+    const day = String(brDate.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   };
 
   const openLeadModal = (l) => {
@@ -755,7 +759,14 @@ function App() {
                       <div className="btn-action" onClick={() => updateM(0, 1)}><i className="fa-solid fa-phone" style={{color:'#2563eb'}}></i><span>+1 Ligação</span></div>
                       <div className="btn-action" onClick={() => updateM(1, 1)}><i className="fa-solid fa-handshake" style={{color:'#be123c'}}></i><span>+1 Reunião</span></div>
                       <div className="btn-action" onClick={() => updateM(2, 1)}><i className="fa-solid fa-trophy" style={{color:'#0891b2'}}></i><span>+1 Cliente</span></div>
-                      <div className="btn-action" onClick={() => { if(window.confirm('Limpar os dados deste dia?')) setStats(prev => ({...prev, byDate: {...prev.byDate, [selectedDate]: {t:0, c:0, m:0, cl:0}}, diaria: {t:0, c:0, m:0, cl:0}})) }}><i className="fa-solid fa-arrows-rotate" style={{color:'#64748b'}}></i><span>Limpar Dia</span></div>
+                      <div className="btn-action" onClick={() => { 
+                        if(window.confirm('Limpar os dados deste dia?')) {
+                          const cleared = {t:0, c:0, m:0, cl:0};
+                          setStats(prev => ({...prev, byDate: {...prev.byDate, [selectedDate]: cleared}, diaria: cleared}));
+                          statService.updateStats({ date: selectedDate, ...cleared }).catch(() => {});
+                          setLastActionTime(Date.now());
+                        }
+                      }}><i className="fa-solid fa-arrows-rotate" style={{color:'#64748b'}}></i><span>Limpar Dia</span></div>
                       <div className="btn-action" onClick={() => openLeadModal({id:'new', name:'', phone:''})}><i className="fa-solid fa-circle-plus" style={{color:'#10b981'}}></i><span>Registrar Lead</span></div>
                     </div>
                   </>
@@ -773,7 +784,14 @@ function App() {
                   <div className="stat-card grey">
                     <h4>Tentativas / Caixa Postal</h4>
                     <div className="value-container">
-                      <div className="value-display" style={{fontSize:'1.8rem', fontWeight:800}}>{getDayData(selectedDate).t}</div>
+                      <input 
+                        type="number" 
+                        className="value-input" 
+                        value={getDayData(selectedDate).t} 
+                        onChange={(e) => setManualValue(3, e.target.value)}
+                        onFocus={(e) => e.target.select()}
+                        style={{width:'90px', background:'none', border:'none', fontWeight:800, color:'#475569', outline:'none', textAlign:'center', fontSize:'1.8rem'}}
+                      />
                     </div>
                     <div className="goal-info">Não atendidas no dia</div>
                     <i className="fa-solid fa-phone-slash"></i>
