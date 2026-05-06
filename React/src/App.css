@@ -319,35 +319,30 @@ body { overflow: hidden; background: var(--bg-main); height: 100vh; width: 100vw
   margin-top: 15px;
   display: block;
 }
-/* RESPONSIVIDADE MOBILE */
+/* RESPONSIVIDADE MOBILE REFINADA */
 @media (max-width: 768px) {
-  body { overflow: auto; height: auto; }
+  body { overflow-y: auto; height: auto; padding-bottom: 70px; } /* Espaço para a barra inferior */
   .main-wrapper { height: auto; overflow: visible; }
   .sys-container { flex-direction: column; height: auto; overflow: visible; }
   
-  .sys-header { padding: 0 10px; font-size: 0.7rem; }
-  .header-left { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+  .sys-header { padding: 0 15px; font-size: 0.75rem; height: 55px; position: sticky; top: 0; z-index: 1000; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+  .header-left { max-width: 200px; }
 
+  /* BARRA DE NAVEGAÇÃO INFERIOR ESTILO APP */
   .sys-sidebar { 
-    width: 100%; 
-    height: auto; 
-    flex-direction: row; 
-    overflow-x: auto; 
-    border-bottom: 1px solid rgba(255,255,255,0.05);
-    position: sticky;
-    top: 48px;
-    z-index: 100;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 65px;
+    background: var(--sidebar-bg);
+    flex-direction: row;
+    z-index: 9998;
+    box-shadow: 0 -2px 15px rgba(0,0,0,0.2);
+    padding: 0 10px;
   }
   
   .sidebar-logo, .sidebar-label { display: none; }
-  .sidebar-nav { display: flex; flex-direction: row; width: 100%; }
-  .nav-item { padding: 10px 15px; font-size: 0.7rem; white-space: nowrap; flex: 1; justify-content: center; border-left: none; border-bottom: 3px solid transparent; }
-  .nav-item.active { border-left-color: transparent; border-bottom-color: var(--primary); }
-
-  .sys-content { padding: 10px; gap: 15px; overflow: visible; }
-  
-  .stat-grid { grid-template-columns: 1fr; gap: 15px; }
-  .action-grid { grid-template-columns: repeat(3, 1fr); }
   
   .stat-card { padding: 15px; min-height: 80px; }
   .stat-card .value, .stat-card .value-input { font-size: 2rem !important; }

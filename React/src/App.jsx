@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Chart from 'chart.js/auto';
 import './App.css';
-import { leadService, statService, authService } from './services/api';
+import { leadService, statService, authService, userService } from './services/api';
 import { leadsData } from './leadsData';
 
 function App() {
@@ -15,23 +15,64 @@ function App() {
   const [showCalendar, setShowCalendar] = useState(false);
   const [showMonthModal, setShowMonthModal] = useState(false);
   const [history, setHistory] = useState(() => {
-    const saved = localStorage.getItem('luvi_history_v1');
-    return saved ? JSON.parse(saved) : {};
+    try {
+      const user = sessionStorage.getItem('luvi_username') || 'guest';
+      const saved = localStorage.getItem(`luvi_history_${user}_v1`);
+      return (saved && saved !== 'undefined') ? JSON.parse(saved) : {};
+    } catch (e) {
+      console.error("Error parsing history from localStorage", e);
+      return {};
+    }
   });
   
   const [searchTerm, setSearchTerm] = useState('');
+  const [isOnline, setIsOnline] = useState(true);
+  const [sessionNoteAdded, setSessionNoteAdded] = useState(false);
+  const [selectedNoteIndex, setSelectedNoteIndex] = useState(null);
+  const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
   const chartInstances = useRef({});
 
-  const [isLoggedIn, setIsLoggedIn] = useState(() => localStorage.getItem('luvi_auth') === 'true');
+  const [isLoggedIn, setIsLoggedIn] = useState(() => sessionStorage.getItem('luvi_auth') === 'true');
+  const [username, setUsername] = useState(() => sessionStorage.getItem('luvi_username') || '');
+  const [userRole, setUserRole] = useState(() => sessionStorage.getItem('luvi_role') || 'USER');
+  const [team, setTeam] = useState([]);
+  const [teamStats, setTeamStats] = useState([]); // Estatísticas individuais de cada membro
+  const [filterUserId, setFilterUserId] = useState('');
   const [loginError, setLoginError] = useState('');
+
+  const loadTeam = async () => {
+    if (userRole !== 'MANAGER') return;
+    try {
+      const data = await userService.getUsers();
+      setTeam(data);
+    } catch (err) {
+      console.error('Erro ao carregar equipe:', err);
+    }
+  };
 
   const handleLogin = async (user, pass) => {
     try {
       const data = await authService.login(user, pass);
+      
+      const oldUser = sessionStorage.getItem('luvi_username');
+      if (oldUser && oldUser !== data.username) {
+        // Limpa cache da sessão anterior
+        localStorage.removeItem('luvi_leads_v1');
+        localStorage.removeItem('luvi_crm_v1');
+        localStorage.removeItem('luvi_history_v1');
+      }
+
       setIsLoggedIn(true);
-      localStorage.setItem('luvi_auth', 'true');
-      localStorage.setItem('luvi_token', data.token); // Guardar token para uso futuro
+      setUsername(data.username);
+      setUserRole(data.role);
+      sessionStorage.setItem('luvi_auth', 'true');
+      sessionStorage.setItem('luvi_token', data.token);
+      sessionStorage.setItem('luvi_username', data.username);
+      sessionStorage.setItem('luvi_role', data.role);
       setLoginError('');
+      
+      // Forçar recarregamento para garantir que o estado inicial do usuário seja aplicado
+      window.location.reload();
     } catch (err) {
       setLoginError('Usuário ou senha incorretos ou erro no servidor.');
     }
@@ -39,13 +80,26 @@ function App() {
 
   const handleLogout = () => {
     setIsLoggedIn(false);
-    localStorage.removeItem('luvi_auth');
-    localStorage.removeItem('luvi_token');
+    setUsername('');
+    setUserRole('USER');
+    sessionStorage.removeItem('luvi_auth');
+    sessionStorage.removeItem('luvi_token');
+    sessionStorage.removeItem('luvi_username');
+    sessionStorage.removeItem('luvi_role');
   };
 
   const [stats, setStats] = useState(() => {
-    const saved = localStorage.getItem('luvi_crm_v1');
-    return saved ? JSON.parse(saved) : {
+    try {
+      const user = sessionStorage.getItem('luvi_username') || 'guest';
+      const saved = localStorage.getItem(`luvi_crm_${user}_v1`);
+      if (saved && saved !== 'undefined') {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.byDate) return parsed;
+      }
+    } catch (e) {
+      console.error("Error parsing stats from localStorage", e);
+    }
+    return {
       diaria: {t:0, c:0, m:0, cl:0},
       semanal: { w1:{t:0, c:0, m:0, cl:0}, w2:{t:0, c:0, m:0, cl:0}, w3:{t:0, c:0, m:0, cl:0}, w4:{t:0, c:0, m:0, cl:0} },
       mensal: {t:0, c:0, m:0, cl:0},
@@ -56,52 +110,60 @@ function App() {
   });
 
   const [leads, setLeads] = useState(() => {
-    const saved = localStorage.getItem('luvi_leads_v1');
-    let baseLeads = saved ? JSON.parse(saved) : [];
-    
-    // Combine with leadsData to ensure we have everything
-    const seenNames = new Set();
-    const finalLeads = [];
-    
-    // Process everything to ensure correct category and uniqueness
-    const combined = [...baseLeads, ...leadsData];
-    
-    combined.forEach(l => {
-      const name = (l.name || "").toUpperCase().trim();
-      if (!seenNames.has(name) && name.length > 2) {
-        seenNames.add(name);
-        
-        // Auto-fix category if it's a school
-        let cat = l.category || 'SERVIÇOS';
-        const n = name.toUpperCase();
-        if (n.includes('ESCOLA') || n.includes('COLEGIO') || n.includes('COLÉGIO') || n.includes('CEI') || n.includes('CMEI') || n.includes('INFANTIL') || n.includes('ENSINO') || n.includes('EDUCAÇÃO') || n.includes('EDUCACAO') || n.includes('BERÇARIO') || n.includes('BERCARIO') || n.includes('KIDS')) {
-          cat = 'ESCOLAS';
+    try {
+      const user = sessionStorage.getItem('luvi_username') || 'guest';
+      const saved = localStorage.getItem(`luvi_leads_${user}_v1`);
+      let baseLeads = (saved && saved !== 'undefined') ? JSON.parse(saved) : [];
+      
+      const currentUser = sessionStorage.getItem('luvi_username');
+      const isFelipe = currentUser === 'felipe.possa';
+
+      const seenNames = new Set();
+      const finalLeads = [];
+      const combined = (baseLeads && baseLeads.length > 0) ? baseLeads : leadsData;
+      
+      combined.forEach(l => {
+        if (!l || !l.name) return;
+        const name = l.name.toUpperCase().trim();
+        if (!seenNames.has(name) && name.length > 2) {
+          seenNames.add(name);
+          
+          let cat = l.category || 'SERVIÇOS';
+          const n = name.toUpperCase();
+          if (n.includes('ESCOLA') || n.includes('COLEGIO') || n.includes('COLÉGIO') || n.includes('CEI') || n.includes('CMEI') || n.includes('INFANTIL') || n.includes('ENSINO') || n.includes('EDUCAÇÃO') || n.includes('EDUCACAO') || n.includes('BERÇARIO') || n.includes('BERCARIO') || n.includes('KIDS')) {
+            cat = 'ESCOLAS';
+          }
+          
+          finalLeads.push({
+            id: l.id || Math.random(),
+            _id: l._id || null,
+            name: l.name,
+            phone: l.phone || '',
+            resp: l.resp && l.resp !== 'Felipe' ? l.resp : '',
+            status: l.status || 'Pendente',
+            week: l.week || 'Semana 1',
+            notes: l.address || l.notes || '',
+            category: cat,
+            address: l.address || '',
+            regional: l.regional || '',
+            history: l.history || []
+          });
         }
-        
-        finalLeads.push({
-          id: l.id || Math.random(),
-          name: l.name,
-          phone: l.phone || '',
-          resp: l.resp && l.resp !== 'Felipe' ? l.resp : '',
-          status: l.status || 'Pendente',
-          week: l.week || 'Semana 1',
-          notes: l.address || l.notes || '',
-          category: cat,
-          address: l.address || '',
-          regional: l.regional || '',
-          history: l.history || []
-        });
-      }
-    });
-    
-    localStorage.setItem('luvi_leads_v1', JSON.stringify(finalLeads));
-    return finalLeads;
+      });
+      
+      return finalLeads;
+    } catch (e) {
+      console.error("Error initializing leads", e);
+      return [];
+    }
   });
 
   useEffect(() => {
-    localStorage.setItem('luvi_crm_v1', JSON.stringify(stats));
-    localStorage.setItem('luvi_leads_v1', JSON.stringify(leads));
-    localStorage.setItem('luvi_history_v1', JSON.stringify(history));
+    if (!isLoggedIn) return;
+    const user = username || 'guest';
+    localStorage.setItem(`luvi_crm_${user}_v1`, JSON.stringify(stats));
+    localStorage.setItem(`luvi_leads_${user}_v1`, JSON.stringify(leads));
+    localStorage.setItem(`luvi_history_${user}_v1`, JSON.stringify(history));
     const timer = setTimeout(() => renderCharts(), 100);
     return () => {
       clearTimeout(timer);
@@ -109,40 +171,87 @@ function App() {
     };
   }, [stats, leads, history, activeTab, selectedDate, endDate, selectedMonth]);
 
+  // CARREGAR LISTA DE EQUIPE (MANAGER ONLY)
+  useEffect(() => {
+    if (isLoggedIn && userRole === 'MANAGER') {
+      loadTeam();
+    }
+  }, [isLoggedIn, userRole]);
+
+  // TESTE DE CONEXÃO
+  useEffect(() => {
+    const checkConn = async () => {
+      try {
+        const API_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:5000/api' : '/api';
+        const res = await fetch(`${API_URL}/health`);
+        setIsOnline(res.ok);
+      } catch (e) {
+        setIsOnline(false);
+      }
+    };
+    checkConn();
+    const interval = setInterval(checkConn, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
   // CARREGAR DADOS DO SERVIDOR
   useEffect(() => {
     const loadData = async () => {
+      if (!isLoggedIn) return;
       try {
-        const serverLeads = await leadService.getLeads();
-        if (serverLeads && serverLeads.length > 0) {
-          setLeads(prev => {
-            const combined = [...serverLeads];
-            const seenNames = new Set(serverLeads.map(l => (l.name || "").toUpperCase().trim()));
-            
-            // Adiciona leads locais/estáticos que ainda não estão no servidor
-            prev.forEach(p => {
-              const pName = (p.name || "").toUpperCase().trim();
-              if (pName && !seenNames.has(pName)) {
-                combined.push(p);
-                seenNames.add(pName);
+        const serverLeads = await leadService.getLeads(filterUserId);
+        setIsOnline(true);
+        if (serverLeads && Array.isArray(serverLeads)) {
+          // Se houver um filtro ativo, substituímos tudo pelos dados do servidor
+          if (filterUserId) {
+            setLeads(serverLeads);
+          } else {
+            // Se for visão geral, mesclamos com os dados locais/estáticos (apenas para o Felipe)
+            setLeads(prev => {
+              const combined = [...serverLeads];
+              const seenNames = new Set(serverLeads.map(l => (l?.name || "").toUpperCase().trim()));
+              
+              // Permitir que todos os usuários vejam os leads locais (base) ao sincronizar
+              if (isLoggedIn) {
+                prev.forEach(p => {
+                  const pName = (p.name || "").toUpperCase().trim();
+                  if (pName && !seenNames.has(pName)) {
+                    combined.push(p);
+                    seenNames.add(pName);
+                  }
+                });
               }
+              return combined;
             });
-            return combined;
-          });
+          }
         }
         
-        const serverStats = await statService.getStats();
-        if (serverStats && serverStats.length > 0) {
+        const serverStats = await statService.getStats(filterUserId);
+        if (serverStats && Array.isArray(serverStats)) {
           const statsMap = {};
-          serverStats.forEach(s => { statsMap[s.date] = s; });
+          serverStats.forEach(s => { 
+            if(s && s.date) {
+              // Ajuste de meta: se for equipe e o servidor não somou, forçamos 60. Se for individual, forçamos 30.
+              const calculatedGoal = (!filterUserId) ? 60 : 30;
+              statsMap[s.date] = { ...s, goal: s.goal || calculatedGoal };
+            } 
+          });
           setStats(prev => ({ ...prev, byDate: statsMap }));
         }
+
+        // Se for gestora, pega o comparativo da equipe
+        if (userRole === 'MANAGER') {
+          const tStats = await statService.getTeamStats();
+          if (tStats && Array.isArray(tStats)) setTeamStats(tStats);
+        }
       } catch (err) {
-        console.warn("Servidor offline ou erro ao carregar, usando dados locais.");
+        setIsOnline(false);
       }
     };
     loadData();
-  }, []);
+    const interval = setInterval(loadData, 2000); // 2 segundos para ser "na mesma hora"
+    return () => clearInterval(interval);
+  }, [isLoggedIn, filterUserId, userRole]);
 
   const renderCharts = () => {
     // DIÁRIO
@@ -215,7 +324,10 @@ function App() {
     }
   };
 
-  const getDayData = (date) => stats.byDate?.[date] || {t:0, c:0, m:0, cl:0};
+  const getDayData = (date) => {
+    const defaultGoal = (userRole === 'MANAGER' && !filterUserId) ? 60 : 30;
+    return stats.byDate[date] || { t: 0, c: 0, m: 0, cl: 0, goal: defaultGoal };
+  };
 
   const updateM = (t, v) => {
     const dKey = selectedDate;
@@ -228,8 +340,13 @@ function App() {
       if(t===2) { day.cl+=v; }
       if(t===3) { day.t+=v; }
       newStats.diaria = {...day};
-      localStorage.setItem('luvi_crm_v1', JSON.stringify(newStats));
+      
+      // Salva local IMEDIATO para ser rápido
+      localStorage.setItem(`luvi_crm_${username}_v1`, JSON.stringify(newStats));
+      
+      // Sincroniza com servidor em background
       statService.updateStats({ date: dKey, ...day }).catch(() => {});
+      
       return newStats;
     });
   };
@@ -341,27 +458,45 @@ function App() {
     return { total, weeks };
   };
 
+  const exportBackup = () => {
+    const data = {
+      leads,
+      stats,
+      history,
+      exportedAt: new Date().toISOString()
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `backup_crm_luvi_${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
   const saveLead = (data) => {
     // Salvamento Instantâneo (Optimistic Update)
     const tempId = data.id === 'new' ? Date.now() : data.id;
     const finalData = { ...data, id: tempId };
     
+    // ATUALIZAÇÃO OTIMISTA: Muda na tela na hora
     setLeads(prev => {
-      const updated = data.id === 'new' ? [finalData, ...prev] : prev.map(l => (l.id === data.id || (l._id && l._id === data._id)) ? finalData : l);
-      localStorage.setItem('luvi_leads_v1', JSON.stringify(updated));
+      const updated = data.id === 'new' ? [finalData, ...prev] : prev.map(l => (l._id && l._id === data._id) || (l.id === data.id) ? finalData : l);
+      localStorage.setItem(`luvi_leads_${username}_v1`, JSON.stringify(updated));
       return updated;
     });
 
-    // Sincronização em segundo plano (sem bloquear o usuário)
+    setSelectedLead(null);
+
+    // Sincronização em segundo plano
     leadService.saveLead(finalData).then(saved => {
       if (saved && saved._id) {
-        setLeads(prev => prev.map(l => l.id === tempId ? saved : l));
+        setLeads(prev => prev.map(l => (l._id && l._id === saved._id) || (l.id === tempId) ? saved : l));
       }
-    }).catch(() => {
-      console.warn("Sincronização com servidor falhou, dados mantidos localmente.");
+    }).catch(err => {
+      console.warn("Erro ao sincronizar lead, tentando novamente...", err);
     });
-
-    setSelectedLead(null);
   };
 
   const baseSchools = leads.filter(l => l.category === currentBranch);
@@ -430,10 +565,59 @@ function App() {
       ) : (
         <>
           <div className="sys-header">
-            <div className="header-left"><i className="fa-solid fa-cube"></i> DASHBOARD GERENCIAL — SISTEMA DE VENDAS</div>
-            <div className="header-right">
-              <i className="fa-regular fa-circle-user"></i> Felipe Possa
-              <button onClick={handleLogout} style={{background:'none', border:'none', color:'#ef4444', marginLeft:'15px', cursor:'pointer', fontWeight:700}}>Sair</button>
+            <div className="header-left" style={{display:'flex', alignItems:'center', gap:'20px'}}>
+              <h2 style={{display:'flex', alignItems:'center', gap:'15px', margin:0}}>
+                <i className="fa-solid fa-box" style={{color:'var(--primary)'}}></i>
+                DASHBOARD GERENCIAL — SISTEMA DE VENDAS
+              </h2>
+              
+              <div className={`status-badge ${isOnline ? 'online' : 'offline'}`} style={{fontSize:'0.65rem', padding:'4px 10px'}}>
+                <span className="status-dot"></span>
+                {isOnline ? 'CONECTADO' : 'OFFLINE'}
+              </div>
+
+              {userRole === 'MANAGER' && (
+                <div className="manager-filter-inline" style={{display:'flex', alignItems:'center', gap:'8px', background:'rgba(255,255,255,0.05)', padding:'4px 12px', borderRadius:'20px', border:'1px solid rgba(255,255,255,0.1)'}}>
+                  <span style={{fontSize:'0.6rem', fontWeight:800, color:'#94a3b8', whiteSpace:'nowrap'}}>VER EQUIPE:</span>
+                  <select 
+                    value={filterUserId} 
+                    onChange={(e) => setFilterUserId(e.target.value)}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--primary)',
+                      fontSize: '0.7rem',
+                      fontWeight: 800,
+                      outline: 'none',
+                      cursor: 'pointer',
+                      padding: '2px 0'
+                    }}
+                  >
+                    <option value="" style={{color:'#1e293b'}}>Toda a Equipe</option>
+                    {team.length > 0 ? team.map(u => (
+                      <option key={u._id} value={u._id} style={{color:'#1e293b'}}>{u.username}</option>
+                    )) : (
+                      <>
+                        <option value="felipe.possa" style={{color:'#1e293b'}}>felipe.possa</option>
+                        <option value="Joab.marques" style={{color:'#1e293b'}}>Joab.marques</option>
+                      </>
+                    )}
+                  </select>
+                </div>
+              )}
+            </div>
+            <div className="header-right" style={{display:'flex', alignItems:'center'}}>
+              <button onClick={exportBackup} title="Baixar Backup dos Dados" style={{background:'rgba(37,99,235,0.1)', border:'none', color:'var(--primary)', padding:'6px 12px', borderRadius:'6px', cursor:'pointer', marginRight:'15px', fontWeight:700, fontSize:'0.7rem'}}>
+                <i className="fa-solid fa-download" style={{marginRight:'5px'}}></i> BACKUP
+              </button>
+              <div style={{display:'flex', alignItems:'center', gap:'8px', color:'var(--primary)', fontWeight:800}}>
+                <i className="fa-regular fa-circle-user" style={{fontSize:'1.2rem'}}></i>
+                <div style={{display:'flex', flexDirection:'column', lineHeight:1}}>
+                  <span style={{fontSize:'0.8rem'}}>{username}</span>
+                  {userRole === 'MANAGER' && <span style={{fontSize:'0.5rem', color:'#be123c'}}>GESTORA</span>}
+                </div>
+              </div>
+              <button onClick={handleLogout} style={{background:'none', border:'none', color:'#ef4444', marginLeft:'20px', cursor:'pointer', fontWeight:700}}>Sair</button>
             </div>
           </div>
 
@@ -445,7 +629,9 @@ function App() {
           </div>
           <div className="sidebar-label">CRM E PROSPECÇÃO</div>
           <div className="sidebar-nav">
-            <div className={`nav-item ${activeTab === 'leads' ? 'active' : ''}`} onClick={() => setActiveTab('leads')}><i className="fa-solid fa-address-book"></i> Gestão de Leads</div>
+            {userRole !== 'MANAGER' && (
+              <div className={`nav-item ${activeTab === 'leads' ? 'active' : ''}`} onClick={() => setActiveTab('leads')}><i className="fa-solid fa-address-book"></i> Gestão de Leads</div>
+            )}
             <div className={`nav-item ${activeTab === 'agenda' ? 'active' : ''}`} onClick={() => setActiveTab('agenda')}><i className="fa-solid fa-square-poll-vertical"></i> Resultados</div>
           </div>
           
@@ -472,15 +658,69 @@ function App() {
                     <i className="fa-solid fa-calendar-days" style={{marginRight:'5px'}}></i> Calendário
                   </button>
                 </div>
-                <div className="card-header" style={{background:'transparent', border:'none', marginTop:'10px'}}><i className="fa-solid fa-bolt" style={{color:'#f59e0b', marginRight:'8px'}}></i> LANÇAMENTO RÁPIDO</div>
-                <div className="action-grid" style={{gridTemplateColumns:'repeat(6, 1fr)'}}>
-                  <div className="btn-action" onClick={() => updateM(3, 1)}><i className="fa-solid fa-phone-slash" style={{color:'#475569'}}></i><span>+1 Tentativa</span></div>
-                  <div className="btn-action" onClick={() => updateM(0, 1)}><i className="fa-solid fa-phone" style={{color:'#2563eb'}}></i><span>+1 Ligação</span></div>
-                  <div className="btn-action" onClick={() => updateM(1, 1)}><i className="fa-solid fa-handshake" style={{color:'#be123c'}}></i><span>+1 Reunião</span></div>
-                  <div className="btn-action" onClick={() => updateM(2, 1)}><i className="fa-solid fa-trophy" style={{color:'#0891b2'}}></i><span>+1 Cliente</span></div>
-                  <div className="btn-action" onClick={() => { if(window.confirm('Limpar os dados deste dia?')) setStats(prev => ({...prev, byDate: {...prev.byDate, [selectedDate]: {t:0, c:0, m:0, cl:0}}, diaria: {t:0, c:0, m:0, cl:0}})) }}><i className="fa-solid fa-arrows-rotate" style={{color:'#64748b'}}></i><span>Limpar Dia</span></div>
-                  <div className="btn-action" onClick={() => openLeadModal({id:'new', name:'', phone:''})}><i className="fa-solid fa-circle-plus" style={{color:'#10b981'}}></i><span>Registrar Lead</span></div>
-                </div>
+
+                {/* MONITORAMENTO DE PERFORMANCE (GESTORA) */}
+                {userRole === 'MANAGER' && !filterUserId && teamStats.length > 0 && (
+                  <div style={{padding:'20px', borderTop:'1px solid #f1f5f9', background:'#fff'}}>
+                    <div style={{fontSize:'0.75rem', fontWeight:800, color:'#1e293b', marginBottom:'20px', display:'flex', alignItems:'center', gap:'10px'}}>
+                      <div style={{width:'4px', height:'16px', background:'var(--primary)', borderRadius:'2px'}}></div>
+                      PERFORMANCE DA EQUIPE HOJE
+                    </div>
+                    <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(320px, 1fr))', gap:'25px'}}>
+                      {teamStats.map(member => {
+                        const s = member.stats;
+                        const callGoal = s.goal || 30;
+                        const callPerc = Math.min(100, (s.c / callGoal) * 100);
+                        return (
+                          <div key={member.userId} className="manager-team-card" style={{background:'#fff', borderRadius:'16px', padding:'20px', border:'1px solid #e2e8f0', boxShadow:'0 4px 6px -1px rgba(0,0,0,0.05)'}}>
+                            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'15px'}}>
+                              <div style={{display:'flex', alignItems:'center', gap:'10px'}}>
+                                <div style={{width:'35px', height:'35px', background:'var(--primary)', color:'#fff', borderRadius:'10px', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:800, fontSize:'0.9rem'}}>
+                                  {member.username.charAt(0).toUpperCase()}
+                                </div>
+                                <div>
+                                  <div style={{fontWeight:800, fontSize:'0.85rem', color:'#1e293b'}}>{member.username.toUpperCase()}</div>
+                                  <div style={{fontSize:'0.6rem', color:'#64748b', fontWeight:700}}>CONSULTOR ATIVO</div>
+                                </div>
+                              </div>
+                              <div style={{textAlign:'right'}}>
+                                <div style={{fontSize:'1.1rem', fontWeight:800, color:'var(--primary)'}}>{s.c} <span style={{fontSize:'0.7rem', color:'#94a3b8'}}>/ {callGoal}</span></div>
+                                <div style={{fontSize:'0.6rem', fontWeight:800, color: callPerc >= 100 ? '#059669' : '#f59e0b'}}>{callPerc.toFixed(1)}%</div>
+                              </div>
+                            </div>
+                            <div style={{height:'8px', background:'#f1f5f9', borderRadius:'4px', overflow:'hidden', marginBottom:'10px'}}>
+                              <div style={{width:`${callPerc}%`, height:'100%', background: callPerc >= 100 ? '#10b981' : 'var(--primary)', transition:'width 1s ease'}}></div>
+                            </div>
+                            <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px'}}>
+                              <div style={{textAlign:'center', background:'#f8fafc', padding:'8px', borderRadius:'8px'}}>
+                                <div style={{fontSize:'0.5rem', color:'#64748b', fontWeight:800}}>TENTATIVAS</div>
+                                <div style={{fontSize:'0.85rem', fontWeight:800}}>{s.t}</div>
+                              </div>
+                              <div style={{textAlign:'center', background:'#f8fafc', padding:'8px', borderRadius:'8px'}}>
+                                <div style={{fontSize:'0.5rem', color:'#64748b', fontWeight:800}}>LIGAÇÕES</div>
+                                <div style={{fontSize:'0.85rem', fontWeight:800}}>{s.c}</div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {userRole !== 'MANAGER' && (
+                  <>
+                    <div className="card-header" style={{background:'transparent', border:'none', marginTop:'10px'}}><i className="fa-solid fa-bolt" style={{color:'#f59e0b', marginRight:'8px'}}></i> LANÇAMENTO RÁPIDO</div>
+                    <div className="action-grid" style={{gridTemplateColumns:'repeat(6, 1fr)'}}>
+                      <div className="btn-action" onClick={() => updateM(3, 1)}><i className="fa-solid fa-phone-slash" style={{color:'#475569'}}></i><span>+1 Tentativa</span></div>
+                      <div className="btn-action" onClick={() => updateM(0, 1)}><i className="fa-solid fa-phone" style={{color:'#2563eb'}}></i><span>+1 Ligação</span></div>
+                      <div className="btn-action" onClick={() => updateM(1, 1)}><i className="fa-solid fa-handshake" style={{color:'#be123c'}}></i><span>+1 Reunião</span></div>
+                      <div className="btn-action" onClick={() => updateM(2, 1)}><i className="fa-solid fa-trophy" style={{color:'#0891b2'}}></i><span>+1 Cliente</span></div>
+                      <div className="btn-action" onClick={() => { if(window.confirm('Limpar os dados deste dia?')) setStats(prev => ({...prev, byDate: {...prev.byDate, [selectedDate]: {t:0, c:0, m:0, cl:0}}, diaria: {t:0, c:0, m:0, cl:0}})) }}><i className="fa-solid fa-arrows-rotate" style={{color:'#64748b'}}></i><span>Limpar Dia</span></div>
+                      <div className="btn-action" onClick={() => openLeadModal({id:'new', name:'', phone:''})}><i className="fa-solid fa-circle-plus" style={{color:'#10b981'}}></i><span>Registrar Lead</span></div>
+                    </div>
+                  </>
+                )}
               </div>
               
               <div className="stat-grid" style={{marginTop:'15px'}}>
@@ -490,21 +730,16 @@ function App() {
                 </div>
                 <div className="colored-stats">
                   <div className="card-header" style={{background:'transparent', border:'none'}}><i className="fa-solid fa-address-book" style={{color:'#be123c', marginRight:'8px'}}></i> DEMONSTRATIVO GERENCIAL</div>
+                  
                   <div className="stat-card grey">
                     <h4>Tentativas / Caixa Postal</h4>
                     <div className="value-container">
-                      <input 
-                        type="number" 
-                        className="value-input" 
-                        value={getDayData(selectedDate).t} 
-                        onChange={(e) => setManualValue(3, e.target.value)}
-                        onFocus={(e) => e.target.select()}
-                        onBlur={(e) => { if(e.target.value === '') setManualValue(3, 0); }}
-                      />
+                      <div className="value-display" style={{fontSize:'1.8rem', fontWeight:800}}>{getDayData(selectedDate).t}</div>
                     </div>
                     <div className="goal-info">Não atendidas no dia</div>
                     <i className="fa-solid fa-phone-slash"></i>
                   </div>
+                  
                   <div className="stat-card teal">
                     <h4>Ligações Produtivas</h4>
                     <div className="value-container">
@@ -514,34 +749,15 @@ function App() {
                         value={getDayData(selectedDate).c} 
                         onChange={(e) => setManualValue(0, e.target.value)}
                         onFocus={(e) => e.target.select()}
-                        onBlur={(e) => { if(e.target.value === '') setManualValue(0, 0); }}
                       />
                       <span className="goal-separator">/</span>
-                      <input 
-                        type="number" 
-                        className="goal-input-small" 
-                        value={getDayData(selectedDate).goal !== undefined ? getDayData(selectedDate).goal : [15,30,30,30,15,0,0][(new Date(selectedDate + 'T12:00:00').getDay() + 6) % 7]} 
-                        onChange={(e) => setManualGoal(e.target.value)}
-                        onFocus={(e) => e.target.select()}
-                        onBlur={(e) => { if(e.target.value === '') setManualGoal(0); }}
-                        style={{
-                          background: 'rgba(255,255,255,0.2)',
-                          border: 'none',
-                          borderRadius: '4px',
-                          width: '50px',
-                          color: '#fff',
-                          fontSize: '1.2rem',
-                          fontWeight: 800,
-                          textAlign: 'center',
-                          outline: 'none'
-                        }}
-                      />
+                      <span className="goal-value">{getDayData(selectedDate).goal}</span>
                     </div>
-                    <div className="goal-info">Consegui falar ✅</div>
+                    <div className="goal-info">Contatos efetivos ✅</div>
                     <i className="fa-solid fa-phone"></i>
                   </div>
-                  {/* Cards de Reuniões e Clientes removidos do Diário a pedido do usuário, mas o registro continua funcionando */}
-                </div>
+
+                  </div>
               </div>
             </div>
           )}
@@ -572,10 +788,67 @@ function App() {
                       onBlur={(e) => e.target.style.borderColor = '#e2e8f0'}
                     />
                   </div>
-                  <div style={{display:'flex', gap:'8px'}}>
-                    {['CONSTRUTORAS', 'ESCOLAS', 'FACULDADES', 'SERVIÇOS'].map(cat => (
-                      <button key={cat} className={`tab-filter ${currentBranch === cat ? 'active' : ''}`} onClick={() => { setCurrentBranch(cat); setSearchTerm(''); }} style={{padding:'8px 15px', borderRadius:'20px', border:'1px solid #e2e8f0', fontSize:'0.7rem', fontWeight:800, cursor:'pointer', background: currentBranch === cat ? 'var(--primary)' : '#fff', color: currentBranch === cat ? '#fff' : '#64748b'}}>{cat}</button>
-                    ))}
+                  <div style={{position:'relative'}}>
+                    <button 
+                      onClick={() => setShowCategoryDropdown(!showCategoryDropdown)}
+                      style={{
+                        padding:'8px 20px', 
+                        borderRadius:'20px', 
+                        border:'1px solid #e2e8f0', 
+                        fontSize:'0.7rem', 
+                        fontWeight:800, 
+                        cursor:'pointer', 
+                        background: '#fff', 
+                        color: 'var(--primary)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        minWidth: '150px',
+                        justifyContent: 'space-between'
+                      }}
+                    >
+                      <span>{currentBranch}</span>
+                      <i className={`fa-solid fa-chevron-${showCategoryDropdown ? 'up' : 'down'}`}></i>
+                    </button>
+                    
+                    {showCategoryDropdown && (
+                      <div style={{
+                        position:'absolute', 
+                        top:'110%', 
+                        left:0, 
+                        background:'#fff', 
+                        border:'1px solid #e2e8f0', 
+                        borderRadius:'12px', 
+                        boxShadow:'0 10px 15px -3px rgba(0,0,0,0.1)', 
+                        zIndex:100,
+                        width: '100%',
+                        overflow: 'hidden'
+                      }}>
+                        {['CONSTRUTORAS', 'ESCOLAS', 'FACULDADES', 'SERVIÇOS', 'FACILITIES', 'ALIMENTÍCIO'].map(cat => (
+                          <div 
+                            key={cat}
+                            onClick={() => {
+                              setCurrentBranch(cat);
+                              setSearchTerm('');
+                              setShowCategoryDropdown(false);
+                            }}
+                            style={{
+                              padding: '10px 15px',
+                              fontSize: '0.7rem',
+                              fontWeight: currentBranch === cat ? 800 : 600,
+                              color: currentBranch === cat ? 'var(--primary)' : '#64748b',
+                              background: currentBranch === cat ? '#f8fafc' : 'transparent',
+                              cursor: 'pointer',
+                              borderBottom: '1px solid #f1f5f9'
+                            }}
+                            onMouseEnter={(e) => e.target.style.background = '#f1f5f9'}
+                            onMouseLeave={(e) => e.target.style.background = currentBranch === cat ? '#f8fafc' : 'transparent'}
+                          >
+                            {cat}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <button className="tab-filter" style={{marginLeft:'auto', background:'#10b981', color:'#fff', border:'none', padding:'8px 20px', borderRadius:'20px', fontWeight:800, cursor:'pointer'}} onClick={() => openLeadModal({id:'new', name:'', phone:'', category: currentBranch})}>+ Novo Lead</button>
                 </div>
@@ -584,6 +857,7 @@ function App() {
                     <thead><tr><th>Lead / Empresa</th><th>Telefone</th><th>Bairro / Regional</th><th>Status</th><th>Ações</th></tr></thead>
                     <tbody>
                       {leads.filter(l => {
+                        if (!l || !l.name) return false;
                         const matchesSearch = l.name.toLowerCase().includes(searchTerm.toLowerCase());
                         const matchesCategory = l.category === currentBranch;
                         // Se houver busca, ignoramos o filtro de status "Pendente" para encontrar qualquer cliente
@@ -598,8 +872,10 @@ function App() {
                           <td>
                             <div style={{display:'flex', gap:'5px'}}>
                               <button className="btn-ligar" title="Registrar Ligação" onClick={() => {
+                                const updatedLead = {...l, lastCall: getLocalDate(), status: 'Contatado', consultant: username};
                                 updateM(0, 1);
-                                setLeads(prev => prev.map(item => item.id === l.id ? {...item, lastCall: new Date().toISOString().split('T')[0], status: 'Contatado'} : item));
+                                setLeads(prev => prev.map(item => (item._id && item._id === l._id) || (item.id === l.id) ? updatedLead : item));
+                                leadService.saveLead(updatedLead).catch(e => console.error("Erro ao salvar ligação:", e));
                               }}><i className="fa-solid fa-phone"></i></button>
                               <button className="btn-reuniao" title="Agendar Reunião" onClick={() => {
                                 updateM(1, 1);
@@ -611,6 +887,7 @@ function App() {
                         </tr>
                       ))}
                       {leads.filter(l => {
+                        if (!l || !l.name) return false;
                         if (searchTerm) return l.name.toLowerCase().includes(searchTerm.toLowerCase());
                         return l.category === currentBranch && !l.lastCall && !l.nextFollowUp && l.status === 'Pendente';
                       }).length === 0 && (
@@ -625,29 +902,64 @@ function App() {
 
           {activeTab === 'agenda' && (() => {
             const today = getLocalDate();
-            const doneToday = leads.filter(l => l.lastCall === today);
-            const pendingFollowUps = leads.filter(l => l.nextFollowUp && l.nextFollowUp >= today).sort((a,b) => new Date(a.nextFollowUp) - new Date(b.nextFollowUp));
+            
+            // Deduplicação: Pegar apenas o último registro de cada lead
+            const getUniqueLeads = (list) => {
+              const seen = new Set();
+              return list.filter(l => {
+                if (!l._id) return true; // Para novos leads sem ID ainda
+                if (seen.has(l._id)) return false;
+                seen.add(l._id);
+                return true;
+              });
+            };
+
+            // FILTRO DE PRIVACIDADE: Usuário comum só vê os SEUS leads na Agenda/Resultados
+            const myLeads = leads.filter(l => {
+              if (userRole === 'MANAGER') return true;
+              // No back-end o userId pode vir como objeto ou ID string. 
+              // Comparamos com o consultant (nome) que é mais seguro agora.
+              return l.consultant === username;
+            });
+
+            // Resultados: Leads contatados (não importa o dia, para não sumir)
+            const resultsLeads = getUniqueLeads(myLeads.filter(l => l.lastCall));
+            
+            // Retornos: Todos os agendados (inclusive atrasados para não sumir)
+            const pendingFollowUps = getUniqueLeads(myLeads.filter(l => l.nextFollowUp))
+              .sort((a,b) => new Date(a.nextFollowUp) - new Date(b.nextFollowUp));
 
             return (
               <div className="content-panel active" style={{display:'flex', flexDirection:'column', gap:'20px'}}>
                 <div className="card-section">
-                  <div className="card-header" style={{background:'#f0f9ff', color:'#0369a1'}}><i className="fa-solid fa-check-double" style={{marginRight:'8px'}}></i> CONTATOS REALIZADOS HOJE (RESULTADOS)</div>
+                  <div className="card-header" style={{background:'#f0f9ff', color:'#0369a1'}}>
+                    <i className="fa-solid fa-check-double" style={{marginRight:'8px'}}></i> 
+                    CONTATOS REALIZADOS (RESULTADOS) 
+                    <span style={{fontSize:'0.7rem', marginLeft:'10px', opacity:0.7}}>(Ficam aqui até serem atualizados)</span>
+                  </div>
                   <div className="table-wrap">
                     <table className="sys-table">
                       <thead>
-                        <tr><th>Lead / Empresa</th><th>Status</th><th>Horário/Data</th><th>Ações</th></tr>
+                        <tr>
+                          <th>Lead / Empresa</th>
+                          {userRole === 'MANAGER' && <th>Consultor</th>}
+                          <th>Status</th>
+                          <th>Último Contato</th>
+                          <th>Ações</th>
+                        </tr>
                       </thead>
                       <tbody>
-                        {doneToday.map(l => (
-                          <tr key={l.id}>
+                        {resultsLeads.map(l => (
+                          <tr key={l._id || l.id}>
                             <td onClick={() => openLeadModal(l)} style={{fontWeight:600, color:'var(--primary)', cursor:'pointer'}}>{l.name}</td>
+                            {userRole === 'MANAGER' && <td style={{fontSize:'0.7rem', fontWeight:800, color:'#64748b'}}>{l.consultant || '—'}</td>}
                             <td><span className="badge" style={{background:'#dcfce7', color:'#166534', padding:'4px 8px', borderRadius:'4px', fontSize:'0.6rem', fontWeight:800}}>{l.status}</span></td>
-                            <td>Hoje</td>
+                            <td>{l.lastCall?.split('-').reverse().join('/') || 'Hoje'}</td>
                             <td><button className="btn-editar" onClick={() => openLeadModal(l)}>Ver Ficha</button></td>
                           </tr>
                         ))}
-                        {doneToday.length === 0 && (
-                          <tr><td colSpan="4" style={{textAlign:'center', padding:'30px', color:'#94a3b8'}}>Nenhuma ligação registrada hoje ainda.</td></tr>
+                        {resultsLeads.length === 0 && (
+                          <tr><td colSpan="4" style={{textAlign:'center', padding:'30px', color:'#94a3b8'}}>Nenhuma ligação registrada ainda.</td></tr>
                         )}
                       </tbody>
                     </table>
@@ -655,24 +967,37 @@ function App() {
                 </div>
 
                 <div className="card-section">
-                  <div className="card-header" style={{background:'#fff7ed', color:'#9a3412'}}><i className="fa-solid fa-clock-rotate-left" style={{marginRight:'8px'}}></i> PRÓXIMOS RETORNOS AGENDADOS</div>
+                  <div className="card-header" style={{background:'#fff7ed', color:'#9a3412'}}>
+                    <i className="fa-solid fa-clock-rotate-left" style={{marginRight:'8px'}}></i> 
+                    PRÓXIMOS RETORNOS AGENDADOS
+                  </div>
                   <div className="table-wrap">
                     <table className="sys-table">
                       <thead>
-                        <tr><th>Lead / Empresa</th><th>Status</th><th>Data de Retorno</th><th>Ações</th></tr>
+                        <tr>
+                          <th>Lead / Empresa</th>
+                          {userRole === 'MANAGER' && <th>Consultor</th>}
+                          <th>Status</th>
+                          <th>Data de Retorno</th>
+                          <th>Ações</th>
+                        </tr>
                       </thead>
                       <tbody>
                         {pendingFollowUps.map(l => (
-                          <tr key={l.id}>
+                          <tr key={l._id || l.id}>
                             <td onClick={() => openLeadModal(l)} style={{fontWeight:600, color:'var(--primary)', cursor:'pointer'}}>{l.name}</td>
+                            {userRole === 'MANAGER' && <td style={{fontSize:'0.7rem', fontWeight:800, color:'#64748b'}}>{l.consultant || '—'}</td>}
                             <td><span className="badge" style={{background:'#f1f5f9', color:'#475569', padding:'4px 8px', borderRadius:'4px', fontSize:'0.6rem', fontWeight:800}}>{l.status}</span></td>
-                            <td style={{fontWeight:800, color: '#ef4444'}}>{l.nextFollowUp.split('-').reverse().join('/')}</td>
+                            <td style={{fontWeight:800, color: l.nextFollowUp < today ? '#be123c' : '#ef4444'}}>
+                              {l.nextFollowUp.split('-').reverse().join('/')}
+                              {l.nextFollowUp < today && <span style={{fontSize:'0.6rem', marginLeft:'5px', display:'block'}}>(ATRASADO)</span>}
+                            </td>
                             <td>
                               <div style={{display:'flex', gap:'8px'}}>
                                 <button className="btn-save" style={{padding:'6px 12px', fontSize:'0.65rem', background:'#10b981', border:'none', color:'#fff', borderRadius:'4px', fontWeight:700, cursor:'pointer'}} onClick={() => {
                                   if(window.confirm(`Confirmar sucesso com ${l.name}?`)) {
-                                    saveLead({...l, status: 'Fechado', nextFollowUp: ''});
-                                    updateM(2, 1); // +1 Cliente
+                                    saveLead({...l, status: 'Fechado', nextFollowUp: '', consultant: username});
+                                    updateM(2, 1);
                                   }
                                 }}>Sucesso</button>
                                 <button className="btn-editar" style={{padding:'6px 12px', fontSize:'0.65rem', fontWeight:700}} onClick={() => openLeadModal(l)}>Reagendar</button>
@@ -723,10 +1048,10 @@ function App() {
                                 });
                               }}
                               style={{width:'40px', background:'none', border:'none', fontWeight:800, color:'#0d9488', outline:'none', textAlign:'right'}}
-                            /> / {stats.weeklyGoals?.c || 120}
+                            /> / {(stats.weeklyGoals?.c || 120) * (userRole === 'MANAGER' && !filterUserId ? 2 : 1)}
                           </div>
                         </div>
-                        <div className="progress-bar-bg"><div className="progress-bar-fill" style={{width: `${Math.min((stats.semanal['w'+w].c / 120) * 100, 100)}%`}}></div></div>
+                        <div className="progress-bar-bg"><div className="progress-bar-fill" style={{width: `${Math.min((stats.semanal['w'+w].c / ((stats.weeklyGoals?.c || 120) * (userRole === 'MANAGER' && !filterUserId ? 2 : 1))) * 100, 100)}%`, background:'#0d9488'}}></div></div>
                         <div className="week-card-row" style={{marginTop:'10px'}}>
                           <div className="label">🏢 Reuniões</div>
                           <div className="value" style={{display:'flex', alignItems:'center', gap:'5px'}}>
@@ -743,10 +1068,10 @@ function App() {
                                 });
                               }}
                               style={{width:'30px', background:'none', border:'none', fontWeight:800, color:'#be123c', outline:'none', textAlign:'right'}}
-                            /> / {stats.weeklyGoals?.m || 6}
+                            /> / {(stats.weeklyGoals?.m || 6) * (userRole === 'MANAGER' && !filterUserId ? 2 : 1)}
                           </div>
                         </div>
-                        <div className="progress-bar-bg"><div className="progress-bar-fill" style={{width: `${Math.min((stats.semanal['w'+w].m / (stats.weeklyGoals?.m || 6)) * 100, 100)}%`, background:'#be123c'}}></div></div>
+                        <div className="progress-bar-bg"><div className="progress-bar-fill" style={{width: `${Math.min((stats.semanal['w'+w].m / ((stats.weeklyGoals?.m || 6) * (userRole === 'MANAGER' && !filterUserId ? 2 : 1))) * 100, 100)}%`, background:'#be123c'}}></div></div>
                         
                         <div className="week-card-row" style={{marginTop:'10px'}}>
                           <div className="label">🏆 Clientes</div>
@@ -764,10 +1089,10 @@ function App() {
                                 });
                               }}
                               style={{width:'30px', background:'none', border:'none', fontWeight:800, color:'#0891b2', outline:'none', textAlign:'right'}}
-                            /> / {stats.weeklyGoals?.cl || 2}
+                            /> / {(stats.weeklyGoals?.cl || 2) * (userRole === 'MANAGER' && !filterUserId ? 2 : 1)}
                           </div>
                         </div>
-                        <div className="progress-bar-bg"><div className="progress-bar-fill" style={{width: `${Math.min((stats.semanal['w'+w].cl / (stats.weeklyGoals?.cl || 2)) * 100, 100)}%`, background:'#0891b2'}}></div></div>
+                        <div className="progress-bar-bg"><div className="progress-bar-fill" style={{width: `${Math.min((stats.semanal['w'+w].cl / ((stats.weeklyGoals?.cl || 2) * (userRole === 'MANAGER' && !filterUserId ? 2 : 1))) * 100, 100)}%`, background:'#0891b2'}}></div></div>
                       </div>
                     ))}
                   </div>
@@ -828,7 +1153,7 @@ function App() {
                           style={{width:'80px', background:'rgba(255,255,255,0.2)', border:'none', borderRadius:'4px', color:'#fff', fontWeight:800, textAlign:'center', outline:'none', fontSize:'1.8rem'}}
                         />
                         <span className="goal-separator">/</span>
-                        <span className="goal-value" style={{fontSize:'1.2rem', opacity:0.8}}>{stats.weeklyGoals?.c || 120}</span>
+                        <span className="goal-value" style={{fontSize:'1.2rem', opacity:0.8}}>{(stats.weeklyGoals?.c || 120) * (userRole === 'MANAGER' && !filterUserId ? 2 : 1)}</span>
                       </div>
                       <i className="fa-solid fa-phone"></i>
                     </div>
@@ -844,7 +1169,7 @@ function App() {
                           style={{width:'60px', background:'rgba(255,255,255,0.2)', border:'none', borderRadius:'4px', color:'#fff', fontWeight:800, textAlign:'center', outline:'none', fontSize:'1.8rem'}}
                         />
                         <span className="goal-separator">/</span>
-                        <span className="goal-value" style={{fontSize:'1.2rem', opacity:0.8}}>{stats.weeklyGoals?.m || 6}</span>
+                        <span className="goal-value" style={{fontSize:'1.2rem', opacity:0.8}}>{(stats.weeklyGoals?.m || 6) * (userRole === 'MANAGER' && !filterUserId ? 2 : 1)}</span>
                       </div>
                       <i className="fa-solid fa-handshake"></i>
                     </div>
@@ -860,7 +1185,7 @@ function App() {
                           style={{width:'60px', background:'rgba(255,255,255,0.2)', border:'none', borderRadius:'4px', color:'#fff', fontWeight:800, textAlign:'center', outline:'none', fontSize:'1.8rem'}}
                         />
                         <span className="goal-separator">/</span>
-                        <span className="goal-value" style={{fontSize:'1.2rem', opacity:0.8}}>{stats.weeklyGoals?.cl || 2}</span>
+                        <span className="goal-value" style={{fontSize:'1.2rem', opacity:0.8}}>{(stats.weeklyGoals?.cl || 2) * (userRole === 'MANAGER' && !filterUserId ? 2 : 1)}</span>
                       </div>
                       <i className="fa-solid fa-trophy"></i>
                     </div>
@@ -910,7 +1235,7 @@ function App() {
                         style={{width:'90px', background:'rgba(255,255,255,0.2)', border:'none', borderRadius:'4px', color:'#fff', fontWeight:800, textAlign:'center', outline:'none', fontSize:'1.8rem'}}
                       />
                       <span className="goal-separator">/</span>
-                      <span className="goal-value" style={{fontSize:'1.2rem', opacity:0.8}}>{stats.monthlyGoals?.c || 480}</span>
+                      <span className="goal-value" style={{fontSize:'1.2rem', opacity:0.8}}>{(stats.monthlyGoals?.c || 480) * (userRole === 'MANAGER' && !filterUserId ? 2 : 1)}</span>
                     </div>
                     <div className="goal-info">Meta mensal</div>
                     <i className="fa-solid fa-phone"></i>
@@ -927,7 +1252,7 @@ function App() {
                         style={{width:'60px', background:'rgba(255,255,255,0.2)', border:'none', borderRadius:'4px', color:'#fff', fontWeight:800, textAlign:'center', outline:'none', fontSize:'1.8rem'}}
                       />
                       <span className="goal-separator">/</span>
-                      <span className="goal-value" style={{fontSize:'1.2rem', opacity:0.8}}>{stats.monthlyGoals?.m || 24}</span>
+                      <span className="goal-value" style={{fontSize:'1.2rem', opacity:0.8}}>{(stats.monthlyGoals?.m || 24) * (userRole === 'MANAGER' && !filterUserId ? 2 : 1)}</span>
                     </div>
                     <div className="goal-info">Meta mensal</div>
                     <i className="fa-solid fa-handshake"></i>
@@ -944,7 +1269,7 @@ function App() {
                         style={{width:'60px', background:'rgba(255,255,255,0.2)', border:'none', borderRadius:'4px', color:'#fff', fontWeight:800, textAlign:'center', outline:'none', fontSize:'1.8rem'}}
                       />
                       <span className="goal-separator">/</span>
-                      <span className="goal-value" style={{fontSize:'1.2rem', opacity:0.8}}>{stats.monthlyGoals?.cl || 8}</span>
+                      <span className="goal-value" style={{fontSize:'1.2rem', opacity:0.8}}>{(stats.monthlyGoals?.cl || 8) * (userRole === 'MANAGER' && !filterUserId ? 2 : 1)}</span>
                     </div>
                     <div className="goal-info">Meta mensal</div>
                     <i className="fa-solid fa-trophy"></i>
@@ -1104,6 +1429,14 @@ function App() {
                     <option>Descartado</option>
                   </select>
                 </div>
+                <div className="form-group-modal">
+                  <label style={{fontSize:'0.65rem', fontWeight:800, color:'#64748b', marginBottom:'8px', display:'block'}}>CONSULTOR RESPONSÁVEL</label>
+                  <select id="edit-consultant" defaultValue={selectedLead.consultant || username} style={{width:'100%', padding:'12px', border:'1px solid #e2e8f0', borderRadius:'8px', fontSize:'0.9rem', fontWeight:800, background:'#f8fafc', color:'var(--primary)'}}>
+                    <option value="felipe.possa">felipe.possa</option>
+                    <option value="Joab.marques">Joab.marques</option>
+                    <option value="Gessica.ogliari">Gessica.ogliari</option>
+                  </select>
+                </div>
               </div>
 
               <div style={{marginTop:'auto', display:'flex', justifyContent:'flex-end', gap:'15px', paddingTop:'25px'}}>
@@ -1129,7 +1462,8 @@ function App() {
                     resp: document.getElementById('edit-resp').value,
                     lastCall: getLocalDate(), // Força a data local de hoje ao salvar
                     nextFollowUp: document.getElementById('edit-nextfollowup').value,
-                    status: document.getElementById('edit-status').value
+                    status: document.getElementById('edit-status').value,
+                    consultant: document.getElementById('edit-consultant').value
                   };
 
                   // Se houver nota, salva no histórico primeiro
