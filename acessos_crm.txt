@@ -1,0 +1,16 @@
+=== ACESSOS LUVI CRM ===
+
+1. FELIPE POSSA (Consultor)
+Usuário: felipe.possa
+Senha: luvi123
+
+2. JOAB MARQUES (Consultor)
+Usuário: joab.marques
+Senha: 123456789
+
+3. GESSICA OGLIARI (Gestora)
+Usuário: gessica.ogliari
+Senha: 123456789
+
+=========================
+OBS: Todos os usuários agora são estritamente em letras MINÚSCULAS.
