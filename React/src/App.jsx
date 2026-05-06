@@ -673,9 +673,13 @@ function App() {
           <div className="sidebar-label">CRM E PROSPECÇÃO</div>
           <div className="sidebar-nav">
             {userRole !== 'MANAGER' && (
-              <div className={`nav-item ${activeTab === 'leads' ? 'active' : ''}`} onClick={() => setActiveTab('leads')}><i className="fa-solid fa-address-book"></i> Gestão de Leads</div>
+              <div className={`nav-item ${activeTab === 'leads' ? 'active' : ''}`} onClick={() => setActiveTab('leads')}>
+                <i className="fa-solid fa-address-book"></i> Gestão de Leads
+              </div>
             )}
-            <div className={`nav-item ${activeTab === 'agenda' ? 'active' : ''}`} onClick={() => setActiveTab('agenda')}><i className="fa-solid fa-square-poll-vertical"></i> Resultados</div>
+            <div className={`nav-item ${activeTab === 'agenda' ? 'active' : ''}`} onClick={() => setActiveTab('agenda')}>
+              <i className="fa-solid fa-square-poll-vertical"></i> Resultados
+            </div>
           </div>
           
           <div className="sidebar-label">INDICADORES</div>
