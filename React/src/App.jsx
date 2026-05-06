@@ -226,7 +226,17 @@ function App() {
               statsMap[s.date] = { ...s, goal: s.goal || baseG };
             } 
           });
-          setStats(prev => ({ ...prev, byDate: statsMap }));
+          setStats(prev => {
+            const newStats = { ...prev, byDate: statsMap };
+            // Atualiza o card do dia que está sendo exibido na tela
+            if (statsMap[selectedDate]) {
+              newStats.diaria = statsMap[selectedDate];
+            } else {
+              const defaultGoal = (!filterUserId && userRole === 'MANAGER') ? 60 : 30;
+              newStats.diaria = { t: 0, c: 0, m: 0, cl: 0, goal: defaultGoal };
+            }
+            return newStats;
+          });
         }
 
         // Se for gestora, pega o comparativo da equipe
@@ -239,12 +249,12 @@ function App() {
       }
     };
     const interval = setInterval(() => {
-      // SÓ ATUALIZA SE NÃO HOUVER AÇÃO RECENTE POR 60 SEGUNDOS
-      // Isso evita que o servidor 'atropele' um clique rápido (como +1 Tentativa)
-      if (Date.now() - lastActionTime > 60000) {
+      // ATUALIZAÇÃO MAIS RÁPIDA (10s) PARA SENTIR O TEMPO REAL
+      // Se não houver ação manual nos últimos 20 segundos, sincroniza
+      if (Date.now() - lastActionTime > 20000) {
         loadData();
       }
-    }, 30000);
+    }, 10000);
     return () => clearInterval(interval);
   }, [isLoggedIn, filterUserId, userRole, lastActionTime]);
 
