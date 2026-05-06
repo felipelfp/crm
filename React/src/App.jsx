@@ -248,9 +248,10 @@ function App() {
   }, [isLoggedIn, filterUserId, username, userRole, selectedDate]);
 
   useEffect(() => {
+    loadData();
     const interval = setInterval(() => {
-      // Usa o Ref para checar se houve ação recente sem reiniciar o efeito
-      if (Date.now() - lastActionTimeRef.current > 20000) {
+      // Aumentado para 30s para evitar flickering após ação manual
+      if (Date.now() - lastActionTimeRef.current > 30000) {
         loadData();
       }
     }, 10000);

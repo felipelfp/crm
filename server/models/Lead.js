@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const LeadSchema = new mongoose.Schema({
   name: { type: String, required: true },
-  id: String, // Campo para compatibilidade com IDs locais/numéricos
+  id: String,
   phone: String,
   address: String,
   resp: String,
@@ -11,14 +11,17 @@ const LeadSchema = new mongoose.Schema({
   lastCall: String,
   nextFollowUp: String,
   notes: String,
-  consultant: String, // CAMPO ADICIONADO PARA SALVAR QUEM FEZ A LIGAÇÃO
-  lastContact: String, // CAMPO ADICIONADO PARA DATA DE RESULTADOS
+  consultant: String,
+  lastContact: String,
   history: [{
     date: String,
     text: String
   }],
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  createdAt: { type: Date, default: Date.now }
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
+  createdAt: { type: Date, default: Date.now, index: true }
 });
+
+LeadSchema.index({ name: 1 });
+LeadSchema.index({ userId: 1, category: 1, status: 1 });
 
 module.exports = mongoose.model('Lead', LeadSchema);
