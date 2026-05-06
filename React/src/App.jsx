@@ -188,75 +188,68 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // CARREGAR DADOS DO SERVIDOR
-  useEffect(() => {
-    const loadData = async () => {
-      if (!isLoggedIn) return;
-      try {
-        const serverLeads = await leadService.getLeads(filterUserId);
-        setIsOnline(true);
-        if (serverLeads && Array.isArray(serverLeads)) {
-          // PRIORIDADE TOTAL AO SERVIDOR: Evita duplicados vindo do cache local
-          setLeads(serverLeads);
-          
-          // Sincronização de emergência: se o Felipe tiver algo que REALMENTE não está no servidor
-          if (username === 'felipe.possa' && !filterUserId) {
-            const localSaved = localStorage.getItem(`luvi_leads_${username}_v1`);
-            if (localSaved) {
-              const localLeads = JSON.parse(localSaved);
-              const serverNames = new Set(serverLeads.map(l => (l.name || "").toUpperCase().trim()));
-              localLeads.forEach(l => {
-                const name = (l.name || "").toUpperCase().trim();
-                if (name && !serverNames.has(name)) {
-                  console.log("☁️ Recuperando lead local ausente no servidor:", l.name);
-                  leadService.saveLead(l).catch(() => {});
-                }
-              });
-            }
+  // FUNÇÃO DE CARREGAMENTO GLOBAL
+  const loadData = useCallback(async () => {
+    if (!isLoggedIn) return;
+    try {
+      const serverLeads = await leadService.getLeads(filterUserId);
+      setIsOnline(true);
+      if (serverLeads && Array.isArray(serverLeads)) {
+        setLeads(serverLeads);
+        if (username === 'felipe.possa' && !filterUserId) {
+          const localSaved = localStorage.getItem(`luvi_leads_${username}_v1`);
+          if (localSaved) {
+            const localLeads = JSON.parse(localSaved);
+            const serverNames = new Set(serverLeads.map(l => (l.name || "").toUpperCase().trim()));
+            localLeads.forEach(l => {
+              const name = (l.name || "").toUpperCase().trim();
+              if (name && !serverNames.has(name)) {
+                leadService.saveLead(l).catch(() => {});
+              }
+            });
           }
         }
-        
-        const serverStats = await statService.getStats(filterUserId);
-        if (serverStats && Array.isArray(serverStats)) {
-          const statsMap = {};
-          serverStats.forEach(s => { 
-            if(s && s.date) {
-              // Metas fixas e corretas: 30 por pessoa, 60 total (ou 480/24/8 mensal)
-              const baseG = (!filterUserId && userRole === 'MANAGER') ? 60 : 30;
-              statsMap[s.date] = { ...s, goal: s.goal || baseG };
-            } 
-          });
-          setStats(prev => {
-            const newStats = { ...prev, byDate: statsMap };
-            // Atualiza o card do dia que está sendo exibido na tela
-            if (statsMap[selectedDate]) {
-              newStats.diaria = statsMap[selectedDate];
-            } else {
-              const defaultGoal = (!filterUserId && userRole === 'MANAGER') ? 60 : 30;
-              newStats.diaria = { t: 0, c: 0, m: 0, cl: 0, goal: defaultGoal };
-            }
-            return newStats;
-          });
-        }
-
-        // Se for gestora, pega o comparativo da equipe
-        if (userRole === 'MANAGER') {
-          const tStats = await statService.getTeamStats();
-          if (tStats && Array.isArray(tStats)) setTeamStats(tStats);
-        }
-      } catch (err) {
-        setIsOnline(false);
       }
-    };
+      
+      const serverStats = await statService.getStats(filterUserId);
+      if (serverStats && Array.isArray(serverStats)) {
+        const statsMap = {};
+        serverStats.forEach(s => { 
+          if(s && s.date) {
+            const baseG = (!filterUserId && userRole === 'MANAGER') ? 60 : 30;
+            statsMap[s.date] = { ...s, goal: s.goal || baseG };
+          } 
+        });
+        setStats(prev => {
+          const newStats = { ...prev, byDate: statsMap };
+          if (statsMap[selectedDate]) {
+            newStats.diaria = statsMap[selectedDate];
+          } else {
+            const defaultGoal = (!filterUserId && userRole === 'MANAGER') ? 60 : 30;
+            newStats.diaria = { t: 0, c: 0, m: 0, cl: 0, goal: defaultGoal };
+          }
+          return newStats;
+        });
+      }
+
+      if (userRole === 'MANAGER') {
+        const tStats = await statService.getTeamStats();
+        if (tStats && Array.isArray(tStats)) setTeamStats(tStats);
+      }
+    } catch (err) {
+      setIsOnline(false);
+    }
+  }, [isLoggedIn, filterUserId, username, userRole, selectedDate]);
+
+  useEffect(() => {
+    loadData();
     const interval = setInterval(() => {
-      // ATUALIZAÇÃO MAIS RÁPIDA (10s) PARA SENTIR O TEMPO REAL
-      // Se não houver ação manual nos últimos 20 segundos, sincroniza
       if (Date.now() - lastActionTime > 20000) {
         loadData();
       }
     }, 10000);
     return () => clearInterval(interval);
-  }, [isLoggedIn, filterUserId, userRole, lastActionTime]);
+  }, [loadData, lastActionTime]);
 
   const renderCharts = () => {
     const updateOrCreate = (key, ctx, config) => {
