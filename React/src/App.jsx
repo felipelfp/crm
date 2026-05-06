@@ -40,10 +40,10 @@ function App() {
     }
   };
 
-  const handleLogin = async (user, pass) => {
+  const handleLogin = async (un, pw) => {
     try {
-      const lowerUser = user.toLowerCase().trim();
-      const data = await authService.login(lowerUser, pass);
+      const lowerUN = un.toLowerCase().trim();
+      const data = await authService.login(lowerUN, pw);
       
       const oldUser = (sessionStorage.getItem('luvi_username') || '').toLowerCase();
       if (oldUser && oldUser !== data.username.toLowerCase()) {

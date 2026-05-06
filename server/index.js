@@ -82,26 +82,28 @@ app.post('/api/auth/login', async (req, res) => {
 // Função para garantir que o admin exista
 const ensureAdmin = async () => {
   try {
-    // Criar Felipe Possa se não existir
-    let felipe = await User.findOne({ username: 'felipe.possa' });
-    if (!felipe) {
-      felipe = await User.create({ username: 'felipe.possa', password: 'luvi123', role: 'USER' });
-      console.log('🚀 Usuário admin "felipe.possa" criado!');
-    }
+    const hashedPasswordFelipe = await require('bcryptjs').hash('luvi123', 10);
+    const hashedPasswordOthers = await require('bcryptjs').hash('123456789', 10);
 
-    // Criar Joab Marques se não existir
-    let joab = await User.findOne({ username: 'joab.marques' });
-    if (!joab) {
-      await User.create({ username: 'joab.marques', password: '123456789', role: 'USER' });
-      console.log('🚀 Usuário "joab.marques" criado!');
-    }
+    const felipe = await User.findOneAndUpdate(
+      { username: 'felipe.possa' },
+      { username: 'felipe.possa', password: hashedPasswordFelipe, role: 'MANAGER' },
+      { upsert: true, new: true }
+    );
+    
+    const joab = await User.findOneAndUpdate(
+      { username: 'joab.marques' },
+      { username: 'joab.marques', password: hashedPasswordOthers, role: 'USER' },
+      { upsert: true, new: true }
+    );
 
-    // Criar Gessica Ogliari (GESTORA)
-    let gessica = await User.findOne({ username: 'gessica.ogliari' });
-    if (!gessica) {
-      await User.create({ username: 'gessica.ogliari', password: '123456789', role: 'MANAGER' });
-      console.log('🚀 Usuária GESTORA "gessica.ogliari" criada!');
-    }
+    const gessica = await User.findOneAndUpdate(
+      { username: 'gessica.ogliari' },
+      { username: 'gessica.ogliari', password: hashedPasswordOthers, role: 'MANAGER' },
+      { upsert: true, new: true }
+    );
+
+    console.log('🚀 Usuários verificados/criados!');
 
     // --- MIGRAÇÃO DE SEGURANÇA: RECONECTAR LEADS AOS NOVOS IDs ---
     const allUsers = await User.find({});
