@@ -230,11 +230,24 @@ function App() {
         setStats(prev => {
           const newStats = { ...prev, byDate: statsMap };
           const defaultGoal = (!filterUserId && userRole === 'MANAGER') ? 60 : 30;
-          if (statsMap[selectedDate]) {
-            newStats.diaria = statsMap[selectedDate];
+          
+          // --- DEFESA DE DADOS (SOLUÇÃO FINAL PARA O SUMIÇO) ---
+          // Se houve uma ação manual nos últimos 30 segundos, NÃO sobrescrevemos a 'diaria'
+          // Isso evita que o 'fetch' de fundo traga o dado antigo enquanto o servidor processa o novo.
+          const isRecentAction = (Date.now() - lastActionTimeRef.current < 30000);
+          
+          if (isRecentAction && prev.diaria) {
+            // Mantemos o que o usuário já tem na tela (valor atualizado localmente)
+            newStats.diaria = prev.diaria;
           } else {
-            newStats.diaria = { t: 0, c: 0, m: 0, cl: 0, goal: defaultGoal };
+            // Se passou de 30s ou não tem ação recente, aceitamos o dado do servidor
+            if (statsMap[selectedDate]) {
+              newStats.diaria = statsMap[selectedDate];
+            } else {
+              newStats.diaria = { t: 0, c: 0, m: 0, cl: 0, goal: defaultGoal };
+            }
           }
+          
           return newStats;
         });
       }
