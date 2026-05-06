@@ -271,23 +271,23 @@ app.delete('/api/leads/:id', authenticateToken, async (req, res) => {
 // STATS (Indicadores)
 app.get('/api/stats', authenticateToken, async (req, res) => {
   try {
-    if (req.user.role === 'MANAGER' && !req.query.userId) {
+    if (req.user.role === 'MANAGER' && (!req.query.userId || req.query.userId === '')) {
       // Visão Geral: Agregar todos os usuários por data
       const aggregatedStats = await Stats.aggregate([
         {
           $group: {
             _id: "$date",
             date: { $first: "$date" },
-            t: { $sum: "$t" },
-            c: { $sum: "$c" },
-            m: { $sum: "$m" },
-            cl: { $sum: "$cl" },
-            goal: { $sum: "$goal" }
+            t: { $sum: { $ifNull: ["$t", 0] } },
+            c: { $sum: { $ifNull: ["$c", 0] } },
+            m: { $sum: { $ifNull: ["$m", 0] } },
+            cl: { $sum: { $ifNull: ["$cl", 0] } },
+            goal: { $sum: { $ifNull: ["$goal", 30] } }
           }
         },
         { $sort: { date: 1 } }
       ]);
-      return res.json(aggregatedStats);
+      return res.json(aggregatedStats || []);
     }
     
     // Visão Individual (Manager filtrado ou User comum)

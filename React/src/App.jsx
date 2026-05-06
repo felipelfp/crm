@@ -217,15 +217,21 @@ function App() {
         serverStats.forEach(s => { 
           if(s && s.date) {
             const baseG = (!filterUserId && userRole === 'MANAGER') ? 60 : 30;
-            statsMap[s.date] = { ...s, goal: s.goal || baseG };
+            statsMap[s.date] = { 
+              t: s.t || 0, 
+              c: s.c || 0, 
+              m: s.m || 0, 
+              cl: s.cl || 0, 
+              goal: s.goal || baseG 
+            };
           } 
         });
         setStats(prev => {
           const newStats = { ...prev, byDate: statsMap };
+          const defaultGoal = (!filterUserId && userRole === 'MANAGER') ? 60 : 30;
           if (statsMap[selectedDate]) {
             newStats.diaria = statsMap[selectedDate];
           } else {
-            const defaultGoal = (!filterUserId && userRole === 'MANAGER') ? 60 : 30;
             newStats.diaria = { t: 0, c: 0, m: 0, cl: 0, goal: defaultGoal };
           }
           return newStats;
