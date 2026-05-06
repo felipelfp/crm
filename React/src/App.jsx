@@ -793,7 +793,7 @@ function App() {
                         className="value-input" 
                         value={getDayData(selectedDate).t} 
                         onChange={(e) => setManualValue(3, e.target.value)}
-                        onFocus={(e) => e.target.select()}
+                        onFocus={(e) => e.target.select()} // Já seleciona tudo para não ficar 030
                         style={{width:'90px', background:'none', border:'none', fontWeight:800, color:'#475569', outline:'none', textAlign:'center', fontSize:'1.8rem'}}
                       />
                     </div>
@@ -809,10 +809,10 @@ function App() {
                         className="value-input" 
                         value={getDayData(selectedDate).c} 
                         onChange={(e) => setManualValue(0, e.target.value)}
-                        onFocus={(e) => e.target.select()}
+                        onFocus={(e) => e.target.select()} // Já seleciona tudo para não ficar 030
                       />
                       <span className="goal-separator">/</span>
-                      <span className="goal-value">{getDayData(selectedDate).goal}</span>
+                      <span className="goal-value">{getDayData(selectedDate).goal || ((!filterUserId && userRole === 'MANAGER') ? 60 : 30)}</span>
                     </div>
                     <div className="goal-info">Contatos efetivos ✅</div>
                     <i className="fa-solid fa-phone"></i>
