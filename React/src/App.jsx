@@ -377,7 +377,7 @@ function App() {
       localStorage.setItem(`luvi_crm_${username}_v1`, JSON.stringify(newStats));
       
       // Sincroniza com servidor em background
-      statService.updateStats({ date: dKey, ...day }).catch(() => {});
+      statService.updateStats({ date: dKey, ...day, userId: filterUserId }).catch(() => {});
       
       return newStats;
     });
@@ -398,7 +398,7 @@ function App() {
       if(t===3) day.t = newValue;
       newStats.diaria = {...day};
       localStorage.setItem(`luvi_crm_${username}_v1`, JSON.stringify(newStats));
-      statService.updateStats({ date: dKey, ...day }).catch(() => {});
+      statService.updateStats({ date: dKey, ...day, userId: filterUserId }).catch(() => {});
       return newStats;
     });
   };
@@ -413,7 +413,7 @@ function App() {
       if (!newStats.byDate[dKey]) newStats.byDate[dKey] = {t:0, c:0, m:0, cl:0};
       newStats.byDate[dKey].goal = newValue;
       localStorage.setItem(`luvi_crm_${username}_v1`, JSON.stringify(newStats));
-      statService.updateStats({ date: dKey, ...newStats.byDate[dKey] }).catch(() => {});
+      statService.updateStats({ date: dKey, ...newStats.byDate[dKey], userId: filterUserId }).catch(() => {});
       return newStats;
     });
   };
@@ -767,7 +767,7 @@ function App() {
                         if(window.confirm('Limpar os dados deste dia?')) {
                           const cleared = {t:0, c:0, m:0, cl:0};
                           setStats(prev => ({...prev, byDate: {...prev.byDate, [selectedDate]: cleared}, diaria: cleared}));
-                          statService.updateStats({ date: selectedDate, ...cleared }).catch(() => {});
+                          statService.updateStats({ date: selectedDate, ...cleared, userId: filterUserId }).catch(() => {});
                           setLastActionTime(Date.now());
                         }
                       }}><i className="fa-solid fa-arrows-rotate" style={{color:'#64748b'}}></i><span>Limpar Dia</span></div>

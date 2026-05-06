@@ -303,11 +303,14 @@ app.get('/api/stats', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/stats', authenticateToken, async (req, res) => {
-  const { date, t, c, m, cl, goal } = req.body;
+  const { date, t, c, m, cl, goal, userId } = req.body;
   try {
+    // Se for MANAGER e passar um userId, salva para aquele user. Caso contrário, salva para si mesmo.
+    const targetUserId = (req.user.role === 'MANAGER' && userId) ? userId : req.user.id;
+    
     const stat = await Stats.findOneAndUpdate(
-      { date, userId: req.user.id },
-      { $set: { t, c, m, cl, goal, userId: req.user.id } },
+      { date, userId: targetUserId },
+      { $set: { t, c, m, cl, goal, userId: targetUserId } },
       { upsert: true, new: true }
     );
     res.json(stat);
