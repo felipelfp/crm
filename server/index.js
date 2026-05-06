@@ -305,15 +305,24 @@ app.get('/api/stats', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/stats', authenticateToken, async (req, res) => {
-  const { date, t, c, m, cl, goal, userId } = req.body;
   try {
-    // Se for MANAGER e passar um userId, salva para aquele user. Caso contrário, salva para si mesmo.
+    const { date, t, c, m, cl, goal, userId } = req.body;
+    if (!date) return res.status(400).json({ error: 'Data é obrigatória' });
+
     const targetUserId = (req.user.role === 'MANAGER' && userId) ? userId : req.user.id;
     
+    // Criar objeto de atualização apenas com campos que foram enviados
+    const updateData = {};
+    if (t !== undefined) updateData.t = t;
+    if (c !== undefined) updateData.c = c;
+    if (m !== undefined) updateData.m = m;
+    if (cl !== undefined) updateData.cl = cl;
+    if (goal !== undefined) updateData.goal = goal;
+
     const stat = await Stats.findOneAndUpdate(
       { date, userId: targetUserId },
-      { $set: { t, c, m, cl, goal, userId: targetUserId } },
-      { upsert: true, new: true }
+      { $set: updateData },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
     );
     res.json(stat);
   } catch (err) {
