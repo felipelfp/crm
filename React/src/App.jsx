@@ -215,7 +215,7 @@ function App() {
           localStorage.setItem(`luvi_leads_${username}_v1`, JSON.stringify(serverLeads));
         }
 
-        if (username === 'felipe.possa' && !filterUserId) {
+        if ((username === 'felipe.possa' || username === 'joab.marques') && !filterUserId) {
           const localSaved = localStorage.getItem(`luvi_leads_${username}_v1`);
           if (localSaved) {
             const localLeads = JSON.parse(localSaved);
