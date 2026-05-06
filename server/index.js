@@ -1,9 +1,9 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
-const path = require('path');
 
 const Lead = require('./models/Lead');
 const Stats = require('./models/Stats');
@@ -38,12 +38,23 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
+// HEALTH CHECK
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
+
 // AUTH
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
   try {
-    console.log(` Tentativa de login: ${username}`);
-    const user = await User.findOne({ username });
+    const lowerUser = (username || '').toLowerCase().trim();
+    console.log(`🔑 Tentativa de login para: ${lowerUser}`);
+    
+    // Busca insensível a maiúsculas/minúsculas
+    const user = await User.findOne({ 
+      username: { $regex: new RegExp(`^${lowerUser}$`, 'i') } 
+    });
+
     if (!user) {
       console.log('❌ Usuário não encontrado');
       return res.status(401).json({ error: 'Usuário não encontrado' });
@@ -79,26 +90,39 @@ const ensureAdmin = async () => {
     }
 
     // Criar Joab Marques se não existir
-    let joab = await User.findOne({ username: 'Joab.marques' });
+    let joab = await User.findOne({ username: 'joab.marques' });
     if (!joab) {
-      await User.create({ username: 'Joab.marques', password: '123456789', role: 'USER' });
-      console.log('🚀 Usuário "Joab.marques" criado!');
+      await User.create({ username: 'joab.marques', password: '123456789', role: 'USER' });
+      console.log('🚀 Usuário "joab.marques" criado!');
     }
 
     // Criar Gessica Ogliari (GESTORA)
-    let gessica = await User.findOne({ username: 'Gessica.ogliari' });
+    let gessica = await User.findOne({ username: 'gessica.ogliari' });
     if (!gessica) {
-      await User.create({ username: 'Gessica.ogliari', password: '123456789', role: 'MANAGER' });
-      console.log('🚀 Usuária GESTORA "Gessica.ogliari" criada!');
+      await User.create({ username: 'gessica.ogliari', password: '123456789', role: 'MANAGER' });
+      console.log('🚀 Usuária GESTORA "gessica.ogliari" criada!');
     }
 
-    // MIGRAR LEADS ANTIGOS (atribuir ao felipe se não tiverem userId)
-    const result = await Lead.updateMany(
+    // --- MIGRAÇÃO DE SEGURANÇA: RECONECTAR LEADS AOS NOVOS IDs ---
+    const allUsers = await User.find({});
+    for (const u of allUsers) {
+      // Procura leads que tenham o nome deste consultor (mesmo que com maiúsculas no passado)
+      const migrationResult = await Lead.updateMany(
+        { consultant: { $regex: new RegExp(`^${u.username}$`, 'i') } },
+        { $set: { userId: u._id, consultant: u.username } }
+      );
+      if (migrationResult.modifiedCount > 0) {
+        console.log(`📦 Recuperados ${migrationResult.modifiedCount} leads para "${u.username}"`);
+      }
+    }
+
+    // Atribuir órfãos restantes ao felipe
+    const orphanResult = await Lead.updateMany(
       { userId: { $exists: false } },
-      { $set: { userId: felipe._id } }
+      { $set: { userId: felipe._id, consultant: 'felipe.possa' } }
     );
-    if (result.modifiedCount > 0) {
-      console.log(`✅ Migrados ${result.modifiedCount} leads para felipe.possa`);
+    if (orphanResult.modifiedCount > 0) {
+      console.log(`✅ Atribuídos ${orphanResult.modifiedCount} leads sem dono ao admin.`);
     }
 
   } catch (err) {
@@ -130,19 +154,11 @@ app.get('/api/users', authenticateToken, async (req, res) => {
 // LEADS
 app.get('/api/leads', authenticateToken, async (req, res) => {
   try {
-    let filter = { userId: req.user.id };
-    if (req.user.role === 'MANAGER') {
-      // Se tiver userId e não for vazio, filtra. Se estiver vazio ou ausente, traz tudo.
-      filter = (req.query.userId && req.query.userId !== '') ? { userId: req.query.userId } : {};
-    } else {
-      // Para usuários comuns: Seus próprios leads OU leads sem dono (Base Comum)
-      filter = { 
-        $or: [
-          { userId: req.user.id },
-          { userId: { $exists: false } },
-          { userId: null }
-        ]
-      };
+    // Gestão de leads compartilhada: todos veem todos os leads.
+    // O que separa os usuários são os RESULTADOS (stats), não a visualização dos leads.
+    let filter = {};
+    if (req.user.role === 'MANAGER' && req.query.userId && req.query.userId !== '') {
+      filter = { userId: req.query.userId };
     }
       
     const leads = await Lead.find(filter).populate('userId', 'username').sort({ createdAt: -1 });
@@ -190,12 +206,49 @@ app.post('/api/leads', authenticateToken, async (req, res) => {
 
 app.put('/api/leads/:id', authenticateToken, async (req, res) => {
   try {
-    const leadData = { ...req.body, consultant: req.user.username };
-    const lead = await Lead.findOneAndUpdate(
-      { _id: req.params.id },
-      leadData,
-      { new: true }
-    );
+    const { id } = req.params;
+    const { name } = req.body;
+    let lead;
+    
+    // 1. Tenta encontrar por _id (MongoDB)
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      lead = await Lead.findById(id);
+    }
+    
+    // 2. Se não encontrou por _id, tenta por ID numérico (legacy)
+    if (!lead && req.body.id) {
+      lead = await Lead.findOne({ id: req.body.id });
+    }
+
+    // 3. BLOQUEIO DE DUPLICIDADE POR NOME: 
+    // Se o nome mudou ou se estamos criando um novo, checa se esse nome já existe em outro registro
+    if (name) {
+      const existingByName = await Lead.findOne({ 
+        name: { $regex: new RegExp(`^${name.trim()}$`, 'i') },
+        _id: { $ne: lead ? lead._id : null }
+      });
+      
+      if (existingByName) {
+        // Se já existe um lead com esse nome, unificamos nele em vez de criar duplicado
+        Object.assign(existingByName, req.body);
+        const saved = await existingByName.save();
+        return res.json(saved);
+      }
+    }
+    
+    if (lead) {
+      // Atualiza o existente
+      Object.assign(lead, req.body);
+      await lead.save();
+    } else {
+      // Cria novo se realmente não existir nada com esse ID nem com esse nome
+      const data = { ...req.body };
+      delete data._id;
+      lead = new Lead(data);
+      if (!lead.userId) lead.userId = req.user.id;
+      await lead.save();
+    }
+    
     res.json(lead);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -290,14 +343,48 @@ app.get('/api/team-stats', authenticateToken, async (req, res) => {
   }
 });
 
-// SERVIR FRONTEND EM PRODUÇÃO
-const frontendPath = path.join(__dirname, '../React/dist');
-app.use(express.static(frontendPath));
+// SERVIR FRONTEND EM PRODUÇÃO (Caminho Robusto para Render/Local)
+const possiblePaths = [
+  path.join(__dirname, '../React/dist'),
+  path.join(__dirname, 'React', 'dist'),
+  path.join(process.cwd(), 'React', 'dist'),
+  path.join(process.cwd(), 'dist')
+];
+
+let frontendPath = '';
+for (const p of possiblePaths) {
+  if (require('fs').existsSync(p)) {
+    frontendPath = p;
+    console.log(`✅ Pasta do site encontrada em: ${p}`);
+    break;
+  }
+}
+
+if (!frontendPath) {
+  console.error('❌ ERRO CRÍTICO: Pasta "dist" do site não foi encontrada em nenhum dos caminhos possíveis!');
+  console.error('Certifique-se de que o comando de build (npm run build) foi executado com sucesso.');
+}
+
+if (frontendPath) {
+  app.use(express.static(frontendPath));
+} else {
+  console.warn('⚠️ AVISO: O servidor está rodando sem os arquivos do site. Execute "npm run build" na pasta React.');
+}
 
 app.get(/.*/, (req, res) => {
-  res.sendFile(path.join(frontendPath, 'index.html'));
+  if (frontendPath) {
+    res.sendFile(path.join(frontendPath, 'index.html'));
+  } else {
+    res.status(500).send('Erro: O servidor está ativo, mas o site não foi construído. Rode o comando de build.');
+  }
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Servidor rodando na porta ${PORT}`);
+  console.log(`
+=========================================
+🚀 SERVIDOR LUVI CRM ATIVO!
+🌍 Porta: ${PORT}
+📂 Site: ${frontendPath || 'NÃO ENCONTRADO'}
+=========================================
+  `);
 });

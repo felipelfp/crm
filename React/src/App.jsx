@@ -14,17 +14,6 @@ function App() {
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
   const [showCalendar, setShowCalendar] = useState(false);
   const [showMonthModal, setShowMonthModal] = useState(false);
-  const [history, setHistory] = useState(() => {
-    try {
-      const user = sessionStorage.getItem('luvi_username') || 'guest';
-      const saved = localStorage.getItem(`luvi_history_${user}_v1`);
-      return (saved && saved !== 'undefined') ? JSON.parse(saved) : {};
-    } catch (e) {
-      console.error("Error parsing history from localStorage", e);
-      return {};
-    }
-  });
-  
   const [searchTerm, setSearchTerm] = useState('');
   const [isOnline, setIsOnline] = useState(true);
   const [sessionNoteAdded, setSessionNoteAdded] = useState(false);
@@ -39,6 +28,7 @@ function App() {
   const [teamStats, setTeamStats] = useState([]); // Estatísticas individuais de cada membro
   const [filterUserId, setFilterUserId] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [lastActionTime, setLastActionTime] = useState(0);
 
   const loadTeam = async () => {
     if (userRole !== 'MANAGER') return;
@@ -52,14 +42,14 @@ function App() {
 
   const handleLogin = async (user, pass) => {
     try {
-      const data = await authService.login(user, pass);
+      const lowerUser = user.toLowerCase().trim();
+      const data = await authService.login(lowerUser, pass);
       
-      const oldUser = sessionStorage.getItem('luvi_username');
-      if (oldUser && oldUser !== data.username) {
-        // Limpa cache da sessão anterior
-        localStorage.removeItem('luvi_leads_v1');
-        localStorage.removeItem('luvi_crm_v1');
-        localStorage.removeItem('luvi_history_v1');
+      const oldUser = (sessionStorage.getItem('luvi_username') || '').toLowerCase();
+      if (oldUser && oldUser !== data.username.toLowerCase()) {
+        // Limpa cache de leads antigo para evitar duplicidade com o novo banco
+        localStorage.removeItem(`luvi_leads_${data.username}_v1`);
+        localStorage.removeItem(`luvi_leads_${oldUser}_v1`);
       }
 
       setIsLoggedIn(true);
@@ -115,9 +105,6 @@ function App() {
       const saved = localStorage.getItem(`luvi_leads_${user}_v1`);
       let baseLeads = (saved && saved !== 'undefined') ? JSON.parse(saved) : [];
       
-      const currentUser = sessionStorage.getItem('luvi_username');
-      const isFelipe = currentUser === 'felipe.possa';
-
       const seenNames = new Set();
       const finalLeads = [];
       const combined = (baseLeads && baseLeads.length > 0) ? baseLeads : leadsData;
@@ -128,11 +115,8 @@ function App() {
         if (!seenNames.has(name) && name.length > 2) {
           seenNames.add(name);
           
-          let cat = l.category || 'SERVIÇOS';
-          const n = name.toUpperCase();
-          if (n.includes('ESCOLA') || n.includes('COLEGIO') || n.includes('COLÉGIO') || n.includes('CEI') || n.includes('CMEI') || n.includes('INFANTIL') || n.includes('ENSINO') || n.includes('EDUCAÇÃO') || n.includes('EDUCACAO') || n.includes('BERÇARIO') || n.includes('BERCARIO') || n.includes('KIDS')) {
-            cat = 'ESCOLAS';
-          }
+          // Preserva a categoria que vem do banco/arquivo sem tentar adivinhar
+          const cat = l.category || 'SERVIÇOS';
           
           finalLeads.push({
             id: l.id || Math.random(),
@@ -163,13 +147,23 @@ function App() {
     const user = username || 'guest';
     localStorage.setItem(`luvi_crm_${user}_v1`, JSON.stringify(stats));
     localStorage.setItem(`luvi_leads_${user}_v1`, JSON.stringify(leads));
-    localStorage.setItem(`luvi_history_${user}_v1`, JSON.stringify(history));
+    
+    // Só renderizamos se não houver um timer pendente
     const timer = setTimeout(() => renderCharts(), 100);
-    return () => {
-      clearTimeout(timer);
-      Object.values(chartInstances.current).forEach(chart => chart?.destroy());
-    };
+    return () => clearTimeout(timer);
   }, [stats, leads, history, activeTab, selectedDate, endDate, selectedMonth]);
+
+  // Limpeza de gráficos ao trocar de aba (para evitar fantasmas)
+  useEffect(() => {
+    return () => {
+      Object.keys(chartInstances.current).forEach(key => {
+        if (chartInstances.current[key]) {
+          chartInstances.current[key].destroy();
+          chartInstances.current[key] = null;
+        }
+      });
+    };
+  }, [activeTab]);
 
   // CARREGAR LISTA DE EQUIPE (MANAGER ONLY)
   useEffect(() => {
@@ -202,27 +196,23 @@ function App() {
         const serverLeads = await leadService.getLeads(filterUserId);
         setIsOnline(true);
         if (serverLeads && Array.isArray(serverLeads)) {
-          // Se houver um filtro ativo, substituímos tudo pelos dados do servidor
-          if (filterUserId) {
-            setLeads(serverLeads);
-          } else {
-            // Se for visão geral, mesclamos com os dados locais/estáticos (apenas para o Felipe)
-            setLeads(prev => {
-              const combined = [...serverLeads];
-              const seenNames = new Set(serverLeads.map(l => (l?.name || "").toUpperCase().trim()));
-              
-              // Permitir que todos os usuários vejam os leads locais (base) ao sincronizar
-              if (isLoggedIn) {
-                prev.forEach(p => {
-                  const pName = (p.name || "").toUpperCase().trim();
-                  if (pName && !seenNames.has(pName)) {
-                    combined.push(p);
-                    seenNames.add(pName);
-                  }
-                });
-              }
-              return combined;
-            });
+          // PRIORIDADE TOTAL AO SERVIDOR: Evita duplicados vindo do cache local
+          setLeads(serverLeads);
+          
+          // Sincronização de emergência: se o Felipe tiver algo que REALMENTE não está no servidor
+          if (username === 'felipe.possa' && !filterUserId) {
+            const localSaved = localStorage.getItem(`luvi_leads_${username}_v1`);
+            if (localSaved) {
+              const localLeads = JSON.parse(localSaved);
+              const serverNames = new Set(serverLeads.map(l => (l.name || "").toUpperCase().trim()));
+              localLeads.forEach(l => {
+                const name = (l.name || "").toUpperCase().trim();
+                if (name && !serverNames.has(name)) {
+                  console.log("☁️ Recuperando lead local ausente no servidor:", l.name);
+                  leadService.saveLead(l).catch(() => {});
+                }
+              });
+            }
           }
         }
         
@@ -231,9 +221,9 @@ function App() {
           const statsMap = {};
           serverStats.forEach(s => { 
             if(s && s.date) {
-              // Ajuste de meta: se for equipe e o servidor não somou, forçamos 60. Se for individual, forçamos 30.
-              const calculatedGoal = (!filterUserId) ? 60 : 30;
-              statsMap[s.date] = { ...s, goal: s.goal || calculatedGoal };
+              // Metas fixas e corretas: 30 por pessoa, 60 total (ou 480/24/8 mensal)
+              const baseG = (!filterUserId && userRole === 'MANAGER') ? 60 : 30;
+              statsMap[s.date] = { ...s, goal: s.goal || baseG };
             } 
           });
           setStats(prev => ({ ...prev, byDate: statsMap }));
@@ -248,22 +238,44 @@ function App() {
         setIsOnline(false);
       }
     };
-    loadData();
-    const interval = setInterval(loadData, 2000); // 2 segundos para ser "na mesma hora"
+    const interval = setInterval(() => {
+      // SÓ ATUALIZA SE NÃO HOUVER AÇÃO RECENTE (Evita sobrescrever o que o usuário está fazendo)
+      if (Date.now() - lastActionTime > 4000) {
+        loadData();
+      }
+    }, 2000);
     return () => clearInterval(interval);
-  }, [isLoggedIn, filterUserId, userRole]);
+  }, [isLoggedIn, filterUserId, userRole, lastActionTime]);
 
   const renderCharts = () => {
+    const updateOrCreate = (key, ctx, config) => {
+      try {
+        if (chartInstances.current[key] && chartInstances.current[key].ctx) {
+          const chart = chartInstances.current[key];
+          chart.data.datasets = config.data.datasets;
+          if (config.data.labels) chart.data.labels = config.data.labels;
+          chart.update('none'); 
+        } else {
+          if (chartInstances.current[key]) chartInstances.current[key].destroy();
+          chartInstances.current[key] = new Chart(ctx, config);
+        }
+      } catch (e) {
+        console.error("Erro ao renderizar gráfico:", key, e);
+        // Se der erro, tentamos recriar do zero na próxima
+        chartInstances.current[key] = null;
+      }
+    };
+
     // DIÁRIO
     const dailyCtx = document.getElementById('dailyPieChart');
     if (activeTab === 'diario' && dailyCtx) {
-      if (chartInstances.current.daily) chartInstances.current.daily.destroy();
-      chartInstances.current.daily = new Chart(dailyCtx.getContext('2d'), {
+      const dayData = getDayData(selectedDate);
+      updateOrCreate('daily', dailyCtx.getContext('2d'), {
         type: 'doughnut',
         data: {
           labels: ['Tentativas', 'Ligações', 'Reuniões', 'Clientes'],
           datasets: [{
-            data: [getDayData(selectedDate).t || 1, getDayData(selectedDate).c || 1, getDayData(selectedDate).m || 1, getDayData(selectedDate).cl || 1],
+            data: [dayData.t || 0, dayData.c || 0, dayData.m || 0, dayData.cl || 0],
             backgroundColor: ['#64748b', '#10b981', '#f43f5e', '#06b6d4'],
             hoverOffset: 12, borderWidth: 2, borderColor: '#ffffff'
           }]
@@ -276,13 +288,12 @@ function App() {
     const weeklyPieCtx = document.getElementById('weeklyPieChart');
     if (activeTab === 'semanal' && weeklyPieCtx) {
       const rangeData = getRangeStats(selectedDate, endDate).total;
-      if (chartInstances.current.weeklyPie) chartInstances.current.weeklyPie.destroy();
-      chartInstances.current.weeklyPie = new Chart(weeklyPieCtx.getContext('2d'), {
+      updateOrCreate('weeklyPie', weeklyPieCtx.getContext('2d'), {
         type: 'doughnut',
         data: {
           labels: ['Tentativas', 'Ligações', 'Reuniões', 'Clientes'],
           datasets: [{
-            data: [rangeData.t || 1, rangeData.c || 1, rangeData.m || 1, rangeData.cl || 1],
+            data: [rangeData.t || 0, rangeData.c || 0, rangeData.m || 0, rangeData.cl || 0],
             backgroundColor: ['#64748b', '#10b981', '#f43f5e', '#06b6d4'],
             hoverOffset: 10, borderWidth: 2, borderColor: '#ffffff'
           }]
@@ -291,26 +302,45 @@ function App() {
       });
     }
 
-    // GRÁFICO DE LINHA (MENSAL - DINÂMICO POR MÊS)
+    // GRÁFICO DE LINHA (MENSAL)
     const monthlyCtx = document.getElementById('monthlyLineChart');
     if (activeTab === 'mensal' && monthlyCtx) {
       const mStats = getMonthStats(selectedMonth);
-      if (chartInstances.current.monthly) chartInstances.current.monthly.destroy();
       const ctx = monthlyCtx.getContext('2d');
       const gradient = ctx.createLinearGradient(0, 0, 0, 300);
       gradient.addColorStop(0, 'rgba(37, 99, 235, 0.2)');
       gradient.addColorStop(1, 'rgba(37, 99, 235, 0)');
-      chartInstances.current.monthly = new Chart(ctx, {
+
+      updateOrCreate('monthly', ctx, {
         type: 'line',
         data: {
           labels: ['Semana 1', 'Semana 2', 'Semana 3', 'Semana 4'],
           datasets: [
-            { label: 'Ligações feitas', data: mStats.weeks.map(w => w.c), borderColor: '#2563eb', borderWidth: 3, pointBackgroundColor: '#fff', pointBorderWidth: 2, tension: 0.4, fill: true, backgroundColor: gradient },
-            { label: 'Reuniões feitas', data: mStats.weeks.map(w => w.m), borderColor: '#f43f5e', borderWidth: 3, pointBackgroundColor: '#fff', pointBorderWidth: 2, tension: 0.4 },
-            { label: 'Clientes fechados', data: mStats.weeks.map(w => w.cl), borderColor: '#06b6d4', borderWidth: 3, pointBackgroundColor: '#fff', pointBorderWidth: 2, tension: 0.4 }
+            {
+              label: 'Realizado',
+              data: mStats.weeks.map(w => w.c),
+              borderColor: '#2563eb',
+              backgroundColor: gradient,
+              fill: true,
+              tension: 0.4,
+              borderWidth: 4,
+              pointRadius: 6,
+              pointBackgroundColor: '#fff',
+              pointBorderColor: '#2563eb',
+              pointBorderWidth: 3
+            },
+            {
+              label: 'Meta',
+              data: Array(4).fill((stats.monthlyGoals?.c || 480) / 4 * (userRole === 'MANAGER' && !filterUserId ? 2 : 1)),
+              borderColor: 'rgba(244, 63, 94, 0.3)',
+              borderDash: [5, 5],
+              fill: false,
+              tension: 0,
+              pointRadius: 0
+            }
           ]
         },
-        options: { 
+        options: {
           responsive: true, maintainAspectRatio: false,
           plugins: { 
             legend: { 
@@ -331,6 +361,7 @@ function App() {
 
   const updateM = (t, v) => {
     const dKey = selectedDate;
+    setLastActionTime(Date.now());
     setStats(prev => {
       const newStats = JSON.parse(JSON.stringify(prev));
       if (!newStats.byDate[dKey]) newStats.byDate[dKey] = {t:0, c:0, m:0, cl:0};
@@ -355,6 +386,7 @@ function App() {
     const dKey = selectedDate;
     const newValue = val === '' ? 0 : parseInt(val);
     if (isNaN(newValue)) return;
+    setLastActionTime(Date.now());
     setStats(prev => {
       const newStats = JSON.parse(JSON.stringify(prev));
       if (!newStats.byDate[dKey]) newStats.byDate[dKey] = {t:0, c:0, m:0, cl:0};
@@ -364,7 +396,7 @@ function App() {
       if(t===2) day.cl = newValue;
       if(t===3) day.t = newValue;
       newStats.diaria = {...day};
-      localStorage.setItem('luvi_crm_v1', JSON.stringify(newStats));
+      localStorage.setItem(`luvi_crm_${username}_v1`, JSON.stringify(newStats));
       statService.updateStats({ date: dKey, ...day }).catch(() => {});
       return newStats;
     });
@@ -374,11 +406,12 @@ function App() {
     const dKey = selectedDate;
     const newValue = val === '' ? 0 : parseInt(val);
     if (isNaN(newValue)) return;
+    setLastActionTime(Date.now());
     setStats(prev => {
       const newStats = JSON.parse(JSON.stringify(prev));
       if (!newStats.byDate[dKey]) newStats.byDate[dKey] = {t:0, c:0, m:0, cl:0};
       newStats.byDate[dKey].goal = newValue;
-      localStorage.setItem('luvi_crm_v1', JSON.stringify(newStats));
+      localStorage.setItem(`luvi_crm_${username}_v1`, JSON.stringify(newStats));
       statService.updateStats({ date: dKey, ...newStats.byDate[dKey] }).catch(() => {});
       return newStats;
     });
@@ -402,7 +435,7 @@ function App() {
       const newStats = { ...prev };
       const key = period === 'weekly' ? 'weeklyGoals' : 'monthlyGoals';
       newStats[key] = { ...newStats[key], [type]: newValue };
-      localStorage.setItem('luvi_crm_v1', JSON.stringify(newStats));
+      localStorage.setItem(`luvi_crm_${username}_v1`, JSON.stringify(newStats));
       // Sincronizar com o servidor (como uma estatística especial ou apenas local por enquanto)
       return newStats;
     });
@@ -480,6 +513,7 @@ function App() {
     const tempId = data.id === 'new' ? Date.now() : data.id;
     const finalData = { ...data, id: tempId };
     
+    setLastActionTime(Date.now());
     // ATUALIZAÇÃO OTIMISTA: Muda na tela na hora
     setLeads(prev => {
       const updated = data.id === 'new' ? [finalData, ...prev] : prev.map(l => (l._id && l._id === data._id) || (l.id === data.id) ? finalData : l);
@@ -488,6 +522,11 @@ function App() {
     });
 
     setSelectedLead(null);
+
+    // Se houve nota adicionada nesta sessão ou o status mudou para algo produtivo, atualizamos os stats automaticamente
+    if (sessionNoteAdded) {
+      updateM(0, 1); // +1 Ligação automática ao salvar com anotação
+    }
 
     // Sincronização em segundo plano
     leadService.saveLead(finalData).then(saved => {
@@ -1345,12 +1384,21 @@ function App() {
                     const el = document.getElementById('note-textarea');
                     const val = el.value;
                     if (!val.trim()) return;
-                    setHistory(prev => {
-                      const leadHist = prev[selectedLead.id] || [];
-                      return { ...prev, [selectedLead.id]: [{ date: new Date().toLocaleString('pt-BR'), text: val }, ...leadHist] };
-                    });
+                    
+                    const newNote = { date: new Date().toLocaleString('pt-BR'), text: val };
+                    const updatedLead = { 
+                      ...selectedLead, 
+                      history: [newNote, ...(selectedLead.history || [])] 
+                    };
+                    
+                    setSelectedLead(updatedLead);
+                    setLeads(prev => prev.map(l => (l._id && l._id === updatedLead._id) || (l.id === updatedLead.id) ? updatedLead : l));
+                    
                     setSessionNoteAdded(true);
                     el.value = "";
+                    
+                    // Sincroniza imediatamente com o servidor
+                    leadService.saveLead(updatedLead).catch(err => console.error("Erro ao salvar nota:", err));
                   }}
                 >
                   SALVAR NO HISTÓRICO
@@ -1359,7 +1407,7 @@ function App() {
               
               <div className="history-timeline">
                 <h3 style={{fontSize:'0.8rem', fontWeight:800, color:'#475569', marginBottom:'15px'}}>HISTÓRICO DE INTERAÇÕES</h3>
-                {(history[selectedLead.id] || []).map((h, i) => (
+                {(selectedLead.history || []).map((h, i) => (
                   <div 
                     key={i} 
                     className="history-card" 
@@ -1380,7 +1428,7 @@ function App() {
                     }}>{h.text}</p>
                   </div>
                 ))}
-                {(!history[selectedLead.id] || history[selectedLead.id].length === 0) && (
+                {(!selectedLead.history || selectedLead.history.length === 0) && (
                   <div style={{textAlign:'center', padding:'20px', color:'#94a3b8', fontSize:'0.8rem'}}>Nenhum histórico registrado ainda.</div>
                 )}
               </div>
@@ -1466,15 +1514,13 @@ function App() {
                     consultant: document.getElementById('edit-consultant').value
                   };
 
-                  // Se houver nota, salva no histórico primeiro
+                  // Se houver nota, adiciona ao histórico do lead
                   if (noteVal) {
-                    setHistory(prev => {
-                      const leadHist = prev[selectedLead.id] || [];
-                      const updated = { ...prev, [selectedLead.id]: [{ date: new Date().toLocaleString('pt-BR'), text: noteVal }, ...leadHist] };
-                      localStorage.setItem('luvi_history_v1', JSON.stringify(updated));
-                      return updated;
-                    });
-                    noteEl.value = "";
+                    const newNote = { date: new Date().toLocaleString('pt-BR'), text: noteVal };
+                    data.history = [newNote, ...(selectedLead.history || [])];
+                    if(noteEl) noteEl.value = "";
+                  } else {
+                    data.history = selectedLead.history || [];
                   }
 
                   saveLead(data);
@@ -1512,11 +1558,11 @@ function App() {
             <button className="close-modal" style={{position: 'absolute', top: '20px', right: '20px'}} onClick={() => setSelectedNoteIndex(null)}>&times;</button>
             <h2 style={{fontSize: '1.2rem', fontWeight: 800, color: '#1e293b', marginBottom: '20px'}}>
               <i className="fa-solid fa-note-sticky" style={{marginRight: '10px', color: '#f59e0b'}}></i>
-              Anotação de {history[selectedLead.id][selectedNoteIndex].date}
+              Anotação de {selectedLead.history[selectedNoteIndex].date}
             </h2>
             <textarea 
               id="edit-note-textarea"
-              defaultValue={history[selectedLead.id][selectedNoteIndex].text}
+              defaultValue={selectedLead.history[selectedNoteIndex].text}
               style={{
                 flex: 1,
                 width: '100%',
@@ -1535,12 +1581,15 @@ function App() {
             <div style={{display: 'flex', justifyContent: 'flex-end', gap: '15px', marginTop: '20px'}}>
               <button className="btn-editar" style={{marginRight: 'auto', background: '#fee2e2', color: '#991b1b'}} onClick={() => {
                 if(window.confirm("Tem certeza que deseja apagar esta anotação permanentemente?")) {
-                  setHistory(prev => {
-                    const newHist = prev[selectedLead.id].filter((_, index) => index !== selectedNoteIndex);
-                    const updated = { ...prev, [selectedLead.id]: newHist };
-                    localStorage.setItem('luvi_history_v1', JSON.stringify(updated));
-                    return updated;
-                  });
+                  const updatedHistory = selectedLead.history.filter((_, index) => index !== selectedNoteIndex);
+                  const updatedLead = { ...selectedLead, history: updatedHistory };
+                  
+                  setSelectedLead(updatedLead);
+                  setLeads(prev => prev.map(l => (l._id && l._id === updatedLead._id) || (l.id === updatedLead.id) ? updatedLead : l));
+                  
+                  // Sincroniza com o servidor
+                  leadService.saveLead(updatedLead).catch(err => console.error("Erro ao apagar nota:", err));
+                  
                   setSelectedNoteIndex(null);
                 }
               }}>Apagar Permanente</button>
@@ -1550,13 +1599,16 @@ function App() {
                 style={{width: 'auto', padding: '12px 30px'}}
                 onClick={() => {
                   const newText = document.getElementById('edit-note-textarea').value;
-                  setHistory(prev => {
-                    const newHist = [...prev[selectedLead.id]];
-                    newHist[selectedNoteIndex] = { ...newHist[selectedNoteIndex], text: newText };
-                    const updated = { ...prev, [selectedLead.id]: newHist };
-                    localStorage.setItem('luvi_history_v1', JSON.stringify(updated));
-                    return updated;
-                  });
+                  const updatedHistory = [...selectedLead.history];
+                  updatedHistory[selectedNoteIndex] = { ...updatedHistory[selectedNoteIndex], text: newText };
+                  const updatedLead = { ...selectedLead, history: updatedHistory };
+                  
+                  setSelectedLead(updatedLead);
+                  setLeads(prev => prev.map(l => (l._id && l._id === updatedLead._id) || (l.id === updatedLead.id) ? updatedLead : l));
+                  
+                  // Sincroniza com o servidor
+                  leadService.saveLead(updatedLead).catch(err => console.error("Erro ao editar nota:", err));
+                  
                   setSelectedNoteIndex(null);
                 }}
               >
