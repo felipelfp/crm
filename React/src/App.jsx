@@ -215,7 +215,7 @@ function App() {
           localStorage.setItem(`luvi_leads_${username}_v1`, JSON.stringify(serverLeads));
         }
 
-        if ((username === 'felipe.possa' || username === 'joab.marques') && !filterUserId) {
+        if ((username === 'joab.marques' || username === 'felipe.possa') && !filterUserId) {
           const localSaved = localStorage.getItem(`luvi_leads_${username}_v1`);
           if (localSaved) {
             const localLeads = JSON.parse(localSaved);
@@ -669,8 +669,8 @@ function App() {
                       <option key={u._id} value={u._id} style={{color:'#1e293b'}}>{u.username}</option>
                     )) : (
                       <>
+                        <option value="joab.marques" style={{color:'#1e293b'}}>joab.marques</option>
                         <option value="felipe.possa" style={{color:'#1e293b'}}>felipe.possa</option>
-                        <option value="Joab.marques" style={{color:'#1e293b'}}>Joab.marques</option>
                       </>
                     )}
                   </select>
@@ -1552,9 +1552,9 @@ function App() {
                 <div className="form-group-modal">
                   <label style={{fontSize:'0.65rem', fontWeight:800, color:'#64748b', marginBottom:'8px', display:'block'}}>CONSULTOR RESPONSÁVEL</label>
                   <select id="edit-consultant" defaultValue={selectedLead.consultant || username} style={{width:'100%', padding:'12px', border:'1px solid #e2e8f0', borderRadius:'8px', fontSize:'0.9rem', fontWeight:800, background:'#f8fafc', color:'var(--primary)'}}>
+                    <option value="joab.marques">joab.marques</option>
                     <option value="felipe.possa">felipe.possa</option>
-                    <option value="Joab.marques">Joab.marques</option>
-                    <option value="Gessica.ogliari">Gessica.ogliari</option>
+                    <option value="gessica.ogliari">gessica.ogliari</option>
                   </select>
                 </div>
               </div>
