@@ -31,6 +31,17 @@ function App() {
   const [loginError, setLoginError] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
 
+  const deleteLead = async (id) => {
+    lastActionTimeRef.current = Date.now(); // ATIVA A BLINDAGEM IMEDIATAMENTE
+    if (!window.confirm('Excluir este lead?')) return;
+    try {
+      await leadService.deleteLead(id);
+      setLeads(prev => prev.filter(l => l._id !== id && l.id !== id));
+    } catch (err) {
+      console.error('Erro ao excluir:', err);
+    }
+  };
+
   const loadTeam = async () => {
     if (userRole !== 'MANAGER') return;
     try {
@@ -152,7 +163,7 @@ function App() {
     // Só renderizamos se não houver um timer pendente
     const timer = setTimeout(() => renderCharts(), 100);
     return () => clearTimeout(timer);
-  }, [stats, leads, history, activeTab, selectedDate, endDate, selectedMonth]);
+  }, [stats, leads, activeTab, selectedDate, endDate, selectedMonth]);
 
   // Limpeza de gráficos ao trocar de aba (para evitar fantasmas)
   useEffect(() => {
@@ -196,7 +207,14 @@ function App() {
       const serverLeads = await leadService.getLeads(filterUserId);
       setIsOnline(true);
       if (serverLeads && Array.isArray(serverLeads)) {
-        setLeads(serverLeads);
+        // --- DEFESA DE LEADS (EVITA SUMIÇO DE NOTAS/STATUS) ---
+        const isRecentAction = (Date.now() - lastActionTimeRef.current < 30000);
+        if (!isRecentAction) {
+          setLeads(serverLeads);
+          // Atualiza localStorage apenas se não houver ação recente para não corromper o que o usuário está fazendo
+          localStorage.setItem(`luvi_leads_${username}_v1`, JSON.stringify(serverLeads));
+        }
+
         if (username === 'felipe.possa' && !filterUserId) {
           const localSaved = localStorage.getItem(`luvi_leads_${username}_v1`);
           if (localSaved) {
@@ -232,15 +250,11 @@ function App() {
           const defaultGoal = (!filterUserId && userRole === 'MANAGER') ? 60 : 30;
           
           // --- DEFESA DE DADOS (SOLUÇÃO FINAL PARA O SUMIÇO) ---
-          // Se houve uma ação manual nos últimos 30 segundos, NÃO sobrescrevemos a 'diaria'
-          // Isso evita que o 'fetch' de fundo traga o dado antigo enquanto o servidor processa o novo.
           const isRecentAction = (Date.now() - lastActionTimeRef.current < 30000);
           
           if (isRecentAction && prev.diaria) {
-            // Mantemos o que o usuário já tem na tela (valor atualizado localmente)
             newStats.diaria = prev.diaria;
           } else {
-            // Se passou de 30s ou não tem ação recente, aceitamos o dado do servidor
             if (statsMap[selectedDate]) {
               newStats.diaria = statsMap[selectedDate];
             } else {
@@ -264,7 +278,6 @@ function App() {
   useEffect(() => {
     loadData();
     const interval = setInterval(() => {
-      // Aumentado para 30s para evitar flickering após ação manual
       if (Date.now() - lastActionTimeRef.current > 30000) {
         loadData();
       }
@@ -286,7 +299,6 @@ function App() {
         }
       } catch (e) {
         console.error("Erro ao renderizar gráfico:", key, e);
-        // Se der erro, tentamos recriar do zero na próxima
         chartInstances.current[key] = null;
       }
     };
@@ -397,10 +409,8 @@ function App() {
       if(t===3) { day.t+=v; }
       newStats.diaria = {...day};
       
-      // Salva local IMEDIATO para ser rápido
       localStorage.setItem(`luvi_crm_${username}_v1`, JSON.stringify(newStats));
       
-      // Sincroniza com servidor em background
       statService.updateStats({ date: dKey, ...day, userId: filterUserId }).catch(() => {});
       
       return newStats;
@@ -448,7 +458,6 @@ function App() {
     const diff = value - currentTotal;
     if (diff === 0) return;
 
-    // Aplica a diferença ao dia selecionado
     const tMap = { 'c': 0, 'm': 1, 'cl': 2, 't': 3 };
     updateM(tMap[type], diff);
   };
@@ -461,7 +470,6 @@ function App() {
       const key = period === 'weekly' ? 'weeklyGoals' : 'monthlyGoals';
       newStats[key] = { ...newStats[key], [type]: newValue };
       localStorage.setItem(`luvi_crm_${username}_v1`, JSON.stringify(newStats));
-      // Sincronizar com o servidor (como uma estatística especial ou apenas local por enquanto)
       return newStats;
     });
   };
@@ -505,7 +513,6 @@ function App() {
       total.m += data.m;
       total.cl += data.cl;
 
-      // Distribuir em 4 semanas simplificadas para o demonstrativo
       const weekIdx = Math.min(Math.floor((d-1) / 7), 3);
       weeks[weekIdx].t += data.t;
       weeks[weekIdx].c += data.c;
@@ -520,7 +527,6 @@ function App() {
     const data = {
       leads,
       stats,
-      history,
       exportedAt: new Date().toISOString()
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -534,12 +540,10 @@ function App() {
   };
 
   const saveLead = (data) => {
-    // Salvamento Instantâneo (Optimistic Update)
-    const tempId = data.id === 'new' ? Date.now() : data.id;
-    const finalData = { ...data, id: tempId };
-    
     lastActionTimeRef.current = Date.now();
-    // ATUALIZAÇÃO OTIMISTA: Muda na tela na hora
+    const tempId = data.id === 'new' ? Date.now() : data.id;
+    const finalData = { ...data, id: tempId, consultant: data.consultant || username };
+    
     setLeads(prev => {
       const updated = data.id === 'new' ? [finalData, ...prev] : prev.map(l => (l._id && l._id === data._id) || (l.id === data.id) ? finalData : l);
       localStorage.setItem(`luvi_leads_${username}_v1`, JSON.stringify(updated));
@@ -1457,6 +1461,7 @@ function App() {
                     
                     setSessionNoteAdded(true);
                     el.value = "";
+                    lastActionTimeRef.current = Date.now(); // BLINDAGEM DE NOTA
                     
                     // Sincroniza imediatamente com o servidor
                     leadService.saveLead(updatedLead).catch(err => console.error("Erro ao salvar nota:", err));
@@ -1564,12 +1569,12 @@ function App() {
 
                   const data = {
                     id: selectedLead.id,
-                    _id: selectedLead._id, // Garantir que o ID do MongoDB seja passado
+                    _id: selectedLead._id, 
                     name: document.getElementById('edit-name').value,
                     phone: document.getElementById('edit-phone').value,
                     address: document.getElementById('edit-address').value,
                     resp: document.getElementById('edit-resp').value,
-                    lastCall: getLocalDate(), // Força a data local de hoje ao salvar
+                    lastCall: selectedLead.lastCall || getLocalDate(), 
                     nextFollowUp: document.getElementById('edit-nextfollowup').value,
                     status: document.getElementById('edit-status').value,
                     consultant: document.getElementById('edit-consultant').value
@@ -1648,6 +1653,7 @@ function App() {
                   setSelectedLead(updatedLead);
                   setLeads(prev => prev.map(l => (l._id && l._id === updatedLead._id) || (l.id === updatedLead.id) ? updatedLead : l));
                   
+                  lastActionTimeRef.current = Date.now(); // BLINDAGEM AO APAGAR NOTA
                   // Sincroniza com o servidor
                   leadService.saveLead(updatedLead).catch(err => console.error("Erro ao apagar nota:", err));
                   
@@ -1667,6 +1673,7 @@ function App() {
                   setSelectedLead(updatedLead);
                   setLeads(prev => prev.map(l => (l._id && l._id === updatedLead._id) || (l.id === updatedLead.id) ? updatedLead : l));
                   
+                  lastActionTimeRef.current = Date.now(); // BLINDAGEM AO EDITAR NOTA
                   // Sincroniza com o servidor
                   leadService.saveLead(updatedLead).catch(err => console.error("Erro ao editar nota:", err));
                   
